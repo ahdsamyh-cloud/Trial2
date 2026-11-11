@@ -102,3 +102,12 @@ In `fault_detection.ino`:
 
 Let the rig run for a minute or two after power-up so each baseline
 settles before relying on fault flags.
+
+---
+
+## Also in this repo
+
+- [`litigation-manager/`](litigation-manager/README.md): a web app for
+  managing a law firm's litigation (cases, hearings and deadlines, tasks,
+  documents, time and billing, conflict checks). Run it with
+  `cd litigation-manager && npm start`.

@@ -1,0 +1,12 @@
+{
+  "name": "litigation-manager",
+  "version": "1.0.0",
+  "description": "Web app for managing a law firm's litigation matters: cases, clients, hearings, deadlines, tasks, documents, notes and time.",
+  "main": "server.js",
+  "private": true,
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  }
+}
