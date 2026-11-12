@@ -4,7 +4,7 @@
   "description": "Web app for managing a law firm's litigation matters: cases, clients, hearings, deadlines, tasks, documents, notes and time.",
   "main": "server.js",
   "private": true,
-  "engines": { "node": ">=22.5" },
+  "engines": { "node": ">=22.13" },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server.js",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"

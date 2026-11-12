@@ -2,7 +2,14 @@
 // Database layer: schema, password hashing, and demo seed data.
 // Uses Node's built-in SQLite (node:sqlite) so the app has zero npm dependencies.
 
-const { DatabaseSync } = require('node:sqlite');
+let DatabaseSync;
+try {
+  ({ DatabaseSync } = require('node:sqlite'));
+} catch {
+  console.error(`\nThis app needs a newer version of Node.js (you have ${process.version}).`);
+  console.error('Please install the current "LTS" version from https://nodejs.org and try again.\n');
+  process.exit(1);
+}
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -145,6 +152,77 @@ CREATE INDEX IF NOT EXISTS idx_tasks_case ON tasks(case_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee_id);
 CREATE INDEX IF NOT EXISTS idx_time_case ON time_entries(case_id);
 CREATE INDEX IF NOT EXISTS idx_activity_case ON activity(case_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS contacts (
+  id INTEGER PRIMARY KEY,
+  case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'other',
+  organization TEXT,
+  email TEXT,
+  phone TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS invoices (
+  id INTEGER PRIMARY KEY,
+  number TEXT NOT NULL UNIQUE,
+  case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+  issue_date TEXT NOT NULL,
+  due_date TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  time_total REAL NOT NULL DEFAULT 0,
+  expense_total REAL NOT NULL DEFAULT 0,
+  discount REAL NOT NULL DEFAULT 0,
+  tax_rate REAL NOT NULL DEFAULT 0,
+  tax REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  notes TEXT,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS expenses (
+  id INTEGER PRIMARY KEY,
+  case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  expense_date TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'other',
+  description TEXT,
+  amount REAL NOT NULL,
+  billable INTEGER NOT NULL DEFAULT 1,
+  invoice_id INTEGER REFERENCES invoices(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY,
+  invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  payment_date TEXT NOT NULL,
+  amount REAL NOT NULL,
+  method TEXT,
+  reference TEXT,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS templates (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  case_type TEXT,
+  items TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_contacts_case ON contacts(case_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_case ON expenses(case_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_case ON invoices(case_id);
 `;
 
 function hashPassword(password) {
@@ -161,10 +239,33 @@ function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(expected, actual);
 }
 
+const DEFAULT_SETTINGS = {
+  firm_name: 'Your Law Firm',
+  firm_address: '',
+  firm_email: '',
+  firm_phone: '',
+  currency: 'USD',
+  tax_rate: '0',
+  invoice_prefix: 'INV-',
+  payment_terms: '30',
+  holidays: '',
+};
+
+// Adds columns introduced after the first release so older databases keep working.
+function migrate(db) {
+  const has = (table, col) => db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col);
+  if (!has('events', 'outcome')) db.exec('ALTER TABLE events ADD COLUMN outcome TEXT');
+  if (!has('time_entries', 'invoice_id')) db.exec('ALTER TABLE time_entries ADD COLUMN invoice_id INTEGER REFERENCES invoices(id) ON DELETE SET NULL');
+  if (!has('users', 'ical_token')) db.exec('ALTER TABLE users ADD COLUMN ical_token TEXT');
+  const ins = db.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)');
+  for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) ins.run(k, v);
+}
+
 function open(dataDir, { seed = true } = {}) {
   fs.mkdirSync(path.join(dataDir, 'uploads'), { recursive: true });
   const db = new DatabaseSync(path.join(dataDir, 'litigation.db'));
   db.exec(SCHEMA);
+  migrate(db);
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM users').get();
   if (n === 0) {
     if (seed) seedDemo(db);
@@ -266,6 +367,57 @@ function seedDemo(db) {
 
   const act = db.prepare('INSERT INTO activity (case_id,user_id,action) VALUES (?,?,?)');
   [c1, c2, c3, c4].forEach((c) => act.run(c, admin, 'Matter opened'));
+
+  db.prepare("UPDATE settings SET value=? WHERE key='firm_name'").run('Haddad & Partners');
+  db.prepare("UPDATE settings SET value=? WHERE key='firm_address'").run('Suite 900, 1 Justice Plaza, Port City');
+  db.prepare("UPDATE settings SET value=? WHERE key='firm_email'").run('billing@firm.local');
+
+  const contact = (c, name, role, org, email, phone) =>
+    ins('INSERT INTO contacts (case_id,name,role,organization,email,phone) VALUES (?,?,?,?,?,?)', c, name, role, org, email, phone);
+  contact(c1, 'Dr. Helen Brooks', 'expert', 'Brooks Forensic Accounting', 'hbrooks@example.com', '+1 555 0199');
+  contact(c1, 'Peter Mercer', 'opposing_counsel', 'Mercer & Holt LLP', 'pmercer@mercerholt.example', '+1 555 0123');
+  contact(c1, 'Anna Lee', 'witness', 'Acme Logistics Ltd.', 'anna.lee@acme.example', '');
+  contact(c2, 'Officer T. Grant', 'witness', 'Springfield Police Dept.', '', '+1 555 0150');
+  contact(c2, 'Claims Desk', 'insurer', 'Metro Mutual Insurance', 'claims@metromutual.example', '+1 555 0160');
+
+  const expense = (c, u, d, cat, desc, amt) =>
+    ins('INSERT INTO expenses (case_id,user_id,expense_date,category,description,amount) VALUES (?,?,?,?,?,?)', c, u, d, cat, desc, amt);
+  expense(c1, lina, dayOffset(-20), 'filing_fees', 'Court filing fee — statement of claim', 350);
+  expense(c1, omar, dayOffset(-6), 'courier', 'Courier of document production to opposing counsel', 45);
+  expense(c2, omar, dayOffset(-10), 'expert_fees', 'Medical records retrieval fee', 120);
+  const e4 = expense(c4, omar, dayOffset(-36), 'court_fees', 'Mediation centre fee (50% share)', 600);
+
+  // A paid invoice for the settled matter.
+  const t4 = db.prepare('SELECT id, hours*rate AS v FROM time_entries WHERE case_id=?').all(c4);
+  const timeTotal = t4.reduce((a, r) => a + r.v, 0);
+  const inv = ins(`INSERT INTO invoices (number,case_id,issue_date,due_date,status,time_total,expense_total,tax,total,created_by)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`, 'INV-0001', c4, dayOffset(-30), dayOffset(0), 'paid', timeTotal, 600, 0, timeTotal + 600, sara);
+  for (const r of t4) db.prepare('UPDATE time_entries SET invoice_id=? WHERE id=?').run(inv, r.id);
+  db.prepare('UPDATE expenses SET invoice_id=? WHERE id=?').run(inv, e4);
+  ins('INSERT INTO payments (invoice_id,payment_date,amount,method,reference,created_by) VALUES (?,?,?,?,?,?)',
+    inv, dayOffset(-12), timeTotal + 600, 'bank_transfer', 'ACME-TT-88412', sara);
+
+  const tpl = (name, type, items) => ins('INSERT INTO templates (name,case_type,items) VALUES (?,?,?)', name, type, JSON.stringify(items));
+  tpl('New litigation matter (intake)', null, [
+    { title: 'Run conflict check', days: 0, priority: 'high' },
+    { title: 'Send engagement letter and fee agreement', days: 2, priority: 'normal' },
+    { title: 'Calendar limitation deadline', days: 2, priority: 'high' },
+    { title: 'Collect key documents from client', days: 7, priority: 'normal' },
+    { title: 'Prepare case assessment memo', days: 14, priority: 'normal' },
+  ]);
+  tpl('Discovery phase', null, [
+    { title: 'Serve initial disclosures', days: 14, priority: 'high' },
+    { title: 'Draft interrogatories and document requests', days: 21, priority: 'normal' },
+    { title: 'Prepare client document production', days: 30, priority: 'normal' },
+    { title: 'Schedule depositions', days: 45, priority: 'normal' },
+  ]);
+  tpl('Trial preparation', null, [
+    { title: 'Finalise witness list', days: 0, priority: 'high' },
+    { title: 'Prepare exhibit binders', days: 7, priority: 'high' },
+    { title: 'Draft motions in limine', days: 10, priority: 'normal' },
+    { title: 'Prepare opening statement', days: 14, priority: 'normal' },
+    { title: 'Witness preparation sessions', days: 18, priority: 'high' },
+  ]);
 }
 
-module.exports = { open, hashPassword, verifyPassword };
+module.exports = { open, hashPassword, verifyPassword, DEFAULT_SETTINGS };

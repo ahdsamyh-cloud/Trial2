@@ -198,3 +198,60 @@ a.card:hover { text-decoration: none; border-color: var(--brand-2); }
 .cal .ev { text-transform: none; font-weight: 500; }
 .toolbar input[type=checkbox] { min-width: 0; }
 .userbox .btn, .userbox button { padding: 5px 10px; font-size: 13px; }
+
+/* ---- top bar: search, timer, notifications ---- */
+.logo .firm { font-size: 11px; font-weight: 400; color: #b9c6d8; margin-top: 2px; }
+.sidebar { overflow-y: auto; }
+.nav a { padding: 8px 10px; }
+.topbar { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+.topbar .menu-toggle { margin: 0; }
+.search-box { flex: 1; max-width: 520px; }
+.search-box input { background: #fff; }
+.timer { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.timer .clock { font-variant-numeric: tabular-nums; font-weight: 600; padding: 6px 10px; background: #fff; border: 1px solid var(--border); border-radius: 6px; }
+.timer .clock.running { color: var(--ok); border-color: #a6f4c5; }
+.bell-wrap { position: relative; }
+.bell { position: relative; padding: 7px 9px; }
+.bell svg { width: 18px; height: 18px; fill: var(--brand); }
+.bell-count { position: absolute; top: -6px; right: -6px; background: var(--danger); color: #fff; border-radius: 999px; font-size: 10px; font-weight: 700; padding: 1px 5px; }
+.bell-panel { position: absolute; right: 0; top: 42px; width: 360px; max-width: calc(100vw - 24px); max-height: 70vh; overflow-y: auto; background: #fff; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 12px 30px rgba(16,24,40,.18); z-index: 45; }
+.bell-panel a { color: var(--text); }
+.bell-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.dot { width: 8px; height: 8px; border-radius: 999px; background: var(--warn); margin-top: 6px; flex: none; }
+.dot.high { background: var(--danger); }
+.outcome { margin-top: 4px; padding: 4px 8px; background: #f0fdf4; border-left: 3px solid var(--ok); border-radius: 4px; }
+
+/* ---- case board ---- */
+.board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 12px; overflow-x: auto; padding-bottom: 12px; }
+.board-col { background: #eceff3; border-radius: var(--radius); padding: 8px; min-height: 300px; border: 2px dashed transparent; }
+.board-col.over { border-color: var(--brand-2); background: #e3e9f2; }
+.board-col-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 4px 10px; }
+.board-cards { display: flex; flex-direction: column; gap: 8px; }
+.board-card { background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 10px; box-shadow: var(--shadow); cursor: grab; display: flex; flex-direction: column; gap: 3px; }
+.board-card:hover { border-color: var(--brand-2); }
+.board-card.dragging { opacity: .5; }
+
+/* ---- invoice ---- */
+.invoice .card-body { padding: 32px; }
+.inv-head { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-bottom: 24px; }
+.inv-firm { font-size: 20px; font-weight: 700; color: var(--brand); }
+.inv-title { font-size: 22px; font-weight: 700; letter-spacing: .08em; color: var(--brand); margin-bottom: 6px; }
+.inv-parties { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 16px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+.inv-sec { margin: 18px 0 8px; }
+.inv-totals { width: auto; min-width: 300px; margin: 18px 0 0 auto; }
+.inv-totals td { border: 0; padding: 4px 12px; }
+.inv-totals tr.grand td { font-weight: 700; border-top: 1px solid var(--border); font-size: 15px; }
+.inv-notes { margin-top: 20px; padding: 12px; background: var(--surface-2); border-radius: 6px; }
+.calc-date { font-size: 26px; font-weight: 700; color: var(--brand); margin: 6px 0; }
+
+@media (max-width: 900px) {
+  .topbar { flex-wrap: wrap; }
+  .search-box { order: 3; flex-basis: 100%; max-width: none; }
+  .inv-parties { grid-template-columns: 1fr; }
+  .invoice .card-body { padding: 16px; }
+}
+@media print {
+  .topbar, .no-print, .page-head .actions { display: none !important; }
+  .main { padding: 0; }
+  .invoice { border: 0; }
+}

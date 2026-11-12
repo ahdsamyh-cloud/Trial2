@@ -1,0 +1,72 @@
+LITIGATION MANAGER - HOW TO START AND TEST IT
+===============================================
+
+STEP 1 - Install Node.js (only once)
+------------------------------------
+1. Go to https://nodejs.org
+2. Download the "LTS" version and install it (just click Next / Continue).
+
+STEP 2 - Start the app
+----------------------
+WINDOWS: double-click  start-windows.bat
+         If Windows shows "Windows protected your PC", click
+         "More info" and then "Run anyway".
+
+MAC:     right-click  start-mac.command  and choose "Open", then "Open" again.
+         (Only the first time. After that, a normal double-click works.)
+
+A black window opens and your web browser goes to http://localhost:3000
+KEEP THE BLACK WINDOW OPEN while you use the app. Closing it stops the app.
+
+If the browser does not open by itself, open it yourself and type:
+    http://localhost:3000
+
+STEP 3 - Sign in
+----------------
+    Admin (sees everything):  admin@firm.local   password: admin123
+    Partner:                  sara@firm.local    password: password
+    Attorney:                 omar@firm.local    password: password
+    Paralegal:                lina@firm.local    password: password
+
+The app starts with sample cases, clients and hearings so you can try it.
+
+STEP 4 - Things to try (about 20 minutes)
+-----------------------------------------
+ [ ] Dashboard: look at upcoming hearings, overdue tasks, unbilled work.
+ [ ] Bell icon (top right): your alerts for hearings, deadlines and tasks.
+ [ ] Search box (top): type "Brooks" and press Enter.
+ [ ] Cases > open "Acme Logistics v. Blue Ocean Shipping". Look at every tab.
+ [ ] Cases > "+ New matter": create a case of your own.
+ [ ] In your case > Tasks > "Apply checklist": creates a set of tasks at once.
+ [ ] In your case > Hearings & deadlines > add a hearing with a PAST date,
+     then click "Record outcome" and enter a next hearing date.
+ [ ] In your case > Contacts: add a witness or an expert.
+ [ ] In your case > Documents: upload any file, then download it again.
+ [ ] Top bar > "Start timer". Wait a few seconds, then click "Log" to save
+     the time to a case.
+ [ ] In a case > Time & billing: add an expense, then "+ Create invoice".
+     On the invoice: "Mark as sent", "Record payment", "Print / Save as PDF".
+ [ ] Case board: drag a case card to another column to change its status.
+ [ ] Calendar: click a day to add a hearing. Click a hearing to edit it.
+ [ ] Deadline calculator: enter a date and "14" days and click Calculate.
+ [ ] Conflict check: search "Mercer" (opposing counsel in a sample case).
+ [ ] Reports: totals by status, practice area, lawyer, hours and money.
+ [ ] As admin > Settings: change the firm name and currency (e.g. EUR, SAR),
+     add court holidays, edit checklists, download a backup.
+ [ ] Account (bottom left): change your password, get the calendar link.
+ [ ] Sign out and sign in as lina@firm.local (paralegal): she cannot
+     delete cases or create invoices.
+
+USEFUL TO KNOW
+--------------
+* All your data is saved in the "data" folder next to this file.
+* To start again with fresh sample data: close the black window, delete
+  the "data" folder, and start the app again.
+* To stop the app: close the black window (or press Ctrl+C in it).
+* "Port 3000 is already in use" means the app is already running in
+  another window. Use that one, or close it first.
+
+FOR TECHNICAL PEOPLE
+--------------------
+Automatic tests:  open a terminal in this folder and run   npm test
+More details:     README.md

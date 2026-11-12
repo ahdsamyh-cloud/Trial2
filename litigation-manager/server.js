@@ -5,7 +5,8 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { open, hashPassword, verifyPassword } = require('./db');
+const os = require('node:os');
+const { open, hashPassword, verifyPassword, DEFAULT_SETTINGS } = require('./db');
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -24,7 +25,13 @@ const ENUMS = {
   event_kind: ['hearing', 'deadline', 'filing', 'deposition', 'trial', 'meeting', 'other'],
   task_status: ['todo', 'in_progress', 'done'],
   doc_category: ['pleading', 'motion', 'evidence', 'correspondence', 'contract', 'order', 'discovery', 'other'],
+  contact_role: ['witness', 'expert', 'opposing_counsel', 'co_counsel', 'court_clerk', 'insurer', 'mediator', 'other'],
+  expense_category: ['court_fees', 'filing_fees', 'expert_fees', 'travel', 'copying', 'courier', 'translation', 'other'],
+  invoice_status: ['draft', 'sent', 'paid', 'void'],
+  payment_method: ['bank_transfer', 'cash', 'check', 'card', 'other'],
 };
+const BILLING_ROLES = ['admin', 'partner', 'attorney'];
+const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 const CLOSED_STATUSES = ['settled', 'judgment', 'closed'];
 
 // ---------------------------------------------------------------- helpers
@@ -74,6 +81,7 @@ function parseCookies(header = '') {
   return out;
 }
 
+const label = (s) => String(s || '').replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 const today = () => {
   const d = new Date();
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -131,7 +139,7 @@ function createApp({ dataDir = DATA_DIR, seed = true } = {}) {
   const run = (sql, ...p) => db.prepare(sql).run(...p);
 
   function insert(table, obj) {
-    const keys = Object.keys(obj);
+    const keys = Object.keys(obj).filter((k) => obj[k] !== undefined);
     const r = run(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`, ...keys.map((k) => obj[k]));
     return Number(r.lastInsertRowid);
   }
@@ -174,7 +182,9 @@ function createApp({ dataDir = DATA_DIR, seed = true } = {}) {
       status: ['enum', 'case_status'], priority: ['enum', 'priority'], lead_attorney_id: 'int', filed_date: 'date',
       closed_date: 'date', statute_of_limitations: 'date', claim_amount: 'real', fee_arrangement: 'text', outcome: 'text', description: 'text',
     },
-    event: { case_id: 'int', kind: ['enum', 'event_kind'], title: 'text', starts_at: 'datetime', location: 'text', notes: 'text', completed: 'bool' },
+    event: { case_id: 'int', kind: ['enum', 'event_kind'], title: 'text', starts_at: 'datetime', location: 'text', notes: 'text', completed: 'bool', outcome: 'text' },
+    contact: { case_id: 'int', name: 'text', role: ['enum', 'contact_role'], organization: 'text', email: 'text', phone: 'text', notes: 'text' },
+    expense: { case_id: 'int', user_id: 'int', expense_date: 'date', category: ['enum', 'expense_category'], description: 'text', amount: 'real', billable: 'bool' },
     task: { case_id: 'int', title: 'text', assignee_id: 'int', due_date: 'date', status: ['enum', 'task_status'], priority: ['enum', 'priority'], notes: 'text' },
     time: { case_id: 'int', user_id: 'int', work_date: 'date', hours: 'real', rate: 'real', billable: 'bool', description: 'text' },
     user: { name: 'text', email: 'text', role: ['enum', 'role'], hourly_rate: 'real', active: 'bool' },
@@ -215,14 +225,33 @@ function createApp({ dataDir = DATA_DIR, seed = true } = {}) {
     c.team = all('SELECT u.id,u.name,u.role FROM case_team ct JOIN users u ON u.id=ct.user_id WHERE ct.case_id=? ORDER BY u.name', id);
     c.totals = get(`SELECT COALESCE(SUM(hours),0) AS hours, COALESCE(SUM(CASE WHEN billable=1 THEN hours*rate END),0) AS billable_value
       FROM time_entries WHERE case_id=?`, id);
+    c.totals.expenses = get('SELECT COALESCE(SUM(amount),0) n FROM expenses WHERE case_id=?', id).n;
+    c.totals.unbilled = unbilled(id).total;
+    Object.assign(c.totals, get(`SELECT COALESCE(SUM(total),0) AS invoiced,
+      COALESCE(SUM((SELECT COALESCE(SUM(amount),0) FROM payments p WHERE p.invoice_id=i.id)),0) AS paid
+      FROM invoices i WHERE case_id=? AND status!='void'`, id));
     c.counts = {
       events: get('SELECT COUNT(*) n FROM events WHERE case_id=?', id).n,
       tasks: get("SELECT COUNT(*) n FROM tasks WHERE case_id=? AND status!='done'", id).n,
       documents: get('SELECT COUNT(*) n FROM documents WHERE case_id=?', id).n,
       notes: get('SELECT COUNT(*) n FROM notes WHERE case_id=?', id).n,
+      contacts: get('SELECT COUNT(*) n FROM contacts WHERE case_id=?', id).n,
     };
     return c;
   }
+
+  function unbilled(caseId, upTo = '9999-12-31') {
+    const time = all(`SELECT id, round(hours*rate,2) AS v FROM time_entries WHERE case_id=? AND billable=1 AND invoice_id IS NULL AND work_date<=?`, caseId, upTo);
+    const exp = all(`SELECT id, amount AS v FROM expenses WHERE case_id=? AND billable=1 AND invoice_id IS NULL AND expense_date<=?`, caseId, upTo);
+    const timeTotal = round2(time.reduce((a, r) => a + r.v, 0));
+    const expTotal = round2(exp.reduce((a, r) => a + r.v, 0));
+    return { time, exp, time_total: timeTotal, expense_total: expTotal, total: round2(timeTotal + expTotal) };
+  }
+
+  const settings = () => Object.fromEntries(all('SELECT key,value FROM settings').map((r) => [r.key, r.value]));
+
+  // Which matters a user works on (lead or team member).
+  const MY_CASES = '(c.lead_attorney_id=? OR c.id IN (SELECT case_id FROM case_team WHERE user_id=?))';
 
   function setTeam(caseId, ids) {
     if (!Array.isArray(ids)) return;
@@ -242,7 +271,7 @@ function createApp({ dataDir = DATA_DIR, seed = true } = {}) {
   const routes = [];
   const route = (method, pattern, handler, opts = {}) => {
     const keys = [];
-    const re = new RegExp(`^${pattern.replace(/:(\w+)/g, (_, k) => { keys.push(k); return '(\\d+)'; })}$`);
+    const re = new RegExp(`^${pattern.replace(/\./g, '\\.').replace(/:(\w+)/g, (_, k) => { keys.push(k); return k === 'token' ? '([a-f0-9]{32,64})' : '(\\d+)'; })}$`);
     routes.push({ method, re, keys, handler, auth: opts.auth !== false });
   };
 
@@ -390,21 +419,24 @@ function createApp({ dataDir = DATA_DIR, seed = true } = {}) {
       if (table === 'time_entries') {
         if (obj.user_id == null) obj.user_id = user.id;
         if (obj.rate == null) obj.rate = get('SELECT hourly_rate FROM users WHERE id=?', obj.user_id).hourly_rate;
-      } else obj.created_by = user.id;
+      } else if (table === 'expenses') {
+        if (obj.user_id == null) obj.user_id = user.id;
+      } else if (table !== 'contacts') obj.created_by = user.id;
       const id = insert(table, obj);
-      log(obj.case_id, user.id, `${label} added: ${obj.title || obj.description || `${obj.hours}h`}`);
+      log(obj.case_id, user.id, `${label} added: ${obj.title || obj.name || obj.description || (obj.hours != null ? `${obj.hours}h` : '')}`);
       touchCase(obj.case_id);
       return { id };
     });
     route('PUT', `/api/${name}/:id`, async ({ req, user, params }) => {
       const prev = mustGet(table, params.id);
+      if (prev.invoice_id) throw bad('This entry is on an invoice. Void or delete the invoice first to change it.');
       const obj = clean(await readJson(req), spec, required, true);
       checkRefs(obj);
       if (table === 'time_entries' && 'rate' in obj && obj.rate == null) {
         obj.rate = get('SELECT hourly_rate FROM users WHERE id=?', obj.user_id ?? prev.user_id)?.hourly_rate ?? 0;
       }
       update(table, params.id, obj);
-      const title = obj.title || prev.title || prev.description || label;
+      const title = obj.title || obj.name || prev.title || prev.name || prev.description || label;
       let action = `${label} updated: ${title}`;
       if (obj.status === 'done' && prev.status !== 'done') action = `${label} completed: ${title}`;
       if (obj.completed === 1 && !prev.completed) action = `${label} marked done: ${title}`;
@@ -414,14 +446,17 @@ function createApp({ dataDir = DATA_DIR, seed = true } = {}) {
     });
     route('DELETE', `/api/${name}/:id`, ({ user, params }) => {
       const prev = mustGet(table, params.id);
+      if (prev.invoice_id) throw bad('This entry is on an invoice. Void or delete the invoice first to delete it.');
       run(`DELETE FROM ${table} WHERE id=?`, params.id);
-      log(prev.case_id, user.id, `${label} deleted: ${prev.title || prev.description || label}`);
+      log(prev.case_id, user.id, `${label} deleted: ${prev.title || prev.name || prev.description || label}`);
       return { ok: true };
     });
   };
   crudCaseChild('events', 'events', SPEC.event, ['case_id', 'title', 'starts_at'], 'Event');
   crudCaseChild('tasks', 'tasks', SPEC.task, ['title'], 'Task');
   crudCaseChild('time', 'time_entries', SPEC.time, ['case_id', 'work_date', 'hours'], 'Time entry');
+  crudCaseChild('expenses', 'expenses', SPEC.expense, ['case_id', 'expense_date', 'amount'], 'Expense');
+  crudCaseChild('contacts', 'contacts', SPEC.contact, ['case_id', 'name'], 'Contact');
 
   route('GET', '/api/tasks', ({ query, user }) => {
     const where = []; const p = [];
@@ -530,6 +565,10 @@ function createApp({ dataDir = DATA_DIR, seed = true } = {}) {
         overdue_tasks: get("SELECT COUNT(*) n FROM tasks WHERE status!='done' AND due_date<?", t).n,
         hours_month: get('SELECT COALESCE(SUM(hours),0) n FROM time_entries WHERE work_date>=?', monthStart).n,
         my_hours_month: get('SELECT COALESCE(SUM(hours),0) n FROM time_entries WHERE work_date>=? AND user_id=?', monthStart, user.id).n,
+        unbilled: round2(get(`SELECT COALESCE((SELECT SUM(hours*rate) FROM time_entries WHERE billable=1 AND invoice_id IS NULL),0)
+          + COALESCE((SELECT SUM(amount) FROM expenses WHERE billable=1 AND invoice_id IS NULL),0) AS n`).n),
+        outstanding: round2(get(`SELECT COALESCE(SUM(total - (SELECT COALESCE(SUM(amount),0) FROM payments p WHERE p.invoice_id=i.id)),0) n
+          FROM invoices i WHERE status='sent'`).n),
       },
       by_status: all('SELECT status, COUNT(*) n FROM cases GROUP BY status'),
       upcoming: all(`${EVENT_SQL} WHERE e.completed=0 AND e.starts_at>=? AND e.starts_at<? ORDER BY e.starts_at LIMIT 15`, t, addDays(t, 30)),
@@ -555,6 +594,9 @@ function createApp({ dataDir = DATA_DIR, seed = true } = {}) {
       time_by_user: all(`SELECT COALESCE(u.name,'Unknown') AS label, SUM(te.hours) hours, SUM(CASE WHEN te.billable=1 THEN te.hours ELSE 0 END) billable_hours,
         SUM(CASE WHEN te.billable=1 THEN te.hours*te.rate ELSE 0 END) value FROM time_entries te LEFT JOIN users u ON u.id=te.user_id
         WHERE te.work_date BETWEEN ? AND ? GROUP BY label ORDER BY hours DESC`, from, to),
+      invoiced: get("SELECT COALESCE(SUM(total),0) n FROM invoices WHERE status!='void' AND issue_date BETWEEN ? AND ?", from, to).n,
+      collected: get('SELECT COALESCE(SUM(amount),0) n FROM payments WHERE payment_date BETWEEN ? AND ?', from, to).n,
+      expenses: get('SELECT COALESCE(SUM(amount),0) n FROM expenses WHERE expense_date BETWEEN ? AND ?', from, to).n,
       time_by_case: all(`SELECT c.id, c.title AS label, c.internal_ref, SUM(te.hours) hours,
         SUM(CASE WHEN te.billable=1 THEN te.hours*te.rate ELSE 0 END) value FROM time_entries te JOIN cases c ON c.id=te.case_id
         WHERE te.work_date BETWEEN ? AND ? GROUP BY c.id ORDER BY value DESC`, from, to),
@@ -571,7 +613,366 @@ function createApp({ dataDir = DATA_DIR, seed = true } = {}) {
       opposing: all(`SELECT c.id,c.title,c.internal_ref,c.status,c.opposing_party,c.opposing_counsel,cl.name AS client_name FROM cases c
         LEFT JOIN clients cl ON cl.id=c.client_id WHERE c.opposing_party LIKE ? OR c.opposing_counsel LIKE ? ORDER BY c.title`, like, like),
       cases: all(`SELECT c.id,c.title,c.internal_ref,c.status FROM cases c WHERE c.title LIKE ? ORDER BY c.title`, like),
+      contacts: all(`SELECT ct.id,ct.name,ct.role,ct.organization,c.id AS case_id,c.title AS case_title,c.internal_ref FROM contacts ct
+        JOIN cases c ON c.id=ct.case_id WHERE ct.name LIKE ? OR ct.organization LIKE ? ORDER BY ct.name`, like, like),
     };
+  });
+
+
+  // ---------------------------------------------------------- contacts & expenses lists
+  route('GET', '/api/contacts', ({ query }) => {
+    if (!query.case_id) throw bad('case_id is required');
+    return all('SELECT * FROM contacts WHERE case_id=? ORDER BY role, name', +query.case_id);
+  });
+  route('GET', '/api/expenses', ({ query }) => {
+    const where = []; const p = [];
+    if (query.case_id) where.push('x.case_id=?'), p.push(+query.case_id);
+    if (query.from) where.push('x.expense_date>=?'), p.push(query.from);
+    if (query.to) where.push('x.expense_date<=?'), p.push(query.to);
+    return all(`SELECT x.*, u.name AS user_name, c.title AS case_title, c.internal_ref, i.number AS invoice_number FROM expenses x
+      LEFT JOIN users u ON u.id=x.user_id JOIN cases c ON c.id=x.case_id LEFT JOIN invoices i ON i.id=x.invoice_id
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY x.expense_date DESC, x.id DESC`, ...p);
+  });
+
+  // ---------------------------------------------------------- hearing outcome + next date
+  route('POST', '/api/events/:id/outcome', async ({ req, user, params }) => {
+    const ev = mustGet('events', params.id);
+    const body = clean(await readJson(req), { outcome: 'text', next_at: 'datetime', next_title: 'text', next_kind: ['enum', 'event_kind'] }, ['outcome']);
+    run('UPDATE events SET completed=1, outcome=? WHERE id=?', body.outcome, ev.id);
+    log(ev.case_id, user.id, `${ev.title} — outcome recorded: ${body.outcome}`);
+    let nextId = null;
+    if (body.next_at) {
+      nextId = insert('events', { case_id: ev.case_id, kind: body.next_kind || ev.kind, title: body.next_title || ev.title,
+        starts_at: body.next_at, location: ev.location, created_by: user.id });
+      log(ev.case_id, user.id, `Next date scheduled: ${body.next_title || ev.title} on ${body.next_at.replace('T', ' ')}`);
+    }
+    touchCase(ev.case_id);
+    return { ok: true, next_id: nextId };
+  });
+
+  // ---------------------------------------------------------- settings
+  route('GET', '/api/settings', () => settings());
+  route('PUT', '/api/settings', async ({ req, user }) => {
+    requireRole(user, 'admin');
+    const body = await readJson(req);
+    const stmt = db.prepare('INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
+    for (const key of Object.keys(DEFAULT_SETTINGS)) {
+      if (!(key in body)) continue;
+      let v = String(body[key] ?? '').trim().slice(0, 5000);
+      if (key === 'currency') { v = v.toUpperCase(); if (!/^[A-Z]{3}$/.test(v)) throw bad('Currency must be a 3-letter code such as USD, EUR or SAR'); }
+      if (key === 'tax_rate' && (!Number.isFinite(+v) || +v < 0 || +v > 100)) throw bad('Tax rate must be between 0 and 100');
+      if (key === 'payment_terms' && (!Number.isInteger(+v) || +v < 0)) throw bad('Payment terms must be a whole number of days');
+      if (key === 'holidays') {
+        const dates = v.split(/[\s,]+/).filter(Boolean);
+        for (const d of dates) if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw bad(`Holiday "${d}" must be a date in YYYY-MM-DD format`);
+        v = dates.join('\n');
+      }
+      if (key === 'firm_name' && !v) throw bad('Firm name is required');
+      stmt.run(key, v);
+    }
+    return settings();
+  });
+
+  // ---------------------------------------------------------- invoices & payments
+  const INVOICE_SQL = `SELECT i.*, c.title AS case_title, c.internal_ref, c.case_number, c.client_id, cl.name AS client_name,
+      (SELECT COALESCE(SUM(amount),0) FROM payments p WHERE p.invoice_id=i.id) AS paid
+    FROM invoices i JOIN cases c ON c.id=i.case_id LEFT JOIN clients cl ON cl.id=c.client_id`;
+  const withBalance = (i) => ({ ...i, balance: round2(i.total - i.paid), overdue: i.status === 'sent' && i.due_date && i.due_date < today() ? 1 : 0 });
+
+  function refreshInvoiceStatus(id) {
+    const i = get(INVOICE_SQL + ' WHERE i.id=?', id);
+    if (i.status === 'void') return;
+    if (i.paid >= i.total - 0.005 && i.total > 0) run("UPDATE invoices SET status='paid' WHERE id=?", id);
+    else if (i.status === 'paid') run("UPDATE invoices SET status='sent' WHERE id=?", id);
+  }
+  const releaseEntries = (id) => {
+    run('UPDATE time_entries SET invoice_id=NULL WHERE invoice_id=?', id);
+    run('UPDATE expenses SET invoice_id=NULL WHERE invoice_id=?', id);
+  };
+  function tx(fn) {
+    db.exec('BEGIN');
+    try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
+  }
+
+  route('GET', '/api/invoices', ({ query }) => {
+    const where = []; const p = [];
+    if (query.case_id) where.push('i.case_id=?'), p.push(+query.case_id);
+    if (query.client_id) where.push('c.client_id=?'), p.push(+query.client_id);
+    if (query.status === 'overdue') where.push("i.status='sent' AND i.due_date<?"), p.push(today());
+    else if (query.status === 'unpaid') where.push("i.status IN ('draft','sent')");
+    else if (query.status) where.push('i.status=?'), p.push(query.status);
+    return all(`${INVOICE_SQL}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY i.issue_date DESC, i.id DESC`, ...p).map(withBalance);
+  });
+  route('GET', '/api/invoices/:id', ({ params }) => {
+    const i = get(INVOICE_SQL + ' WHERE i.id=?', params.id);
+    if (!i) throw new HttpError(404, 'Invoice not found');
+    const inv = withBalance(i);
+    inv.client = i.client_id ? get('SELECT * FROM clients WHERE id=?', i.client_id) : null;
+    inv.time = all(`SELECT te.*, u.name AS user_name, round(te.hours*te.rate,2) AS amount FROM time_entries te LEFT JOIN users u ON u.id=te.user_id
+      WHERE te.invoice_id=? ORDER BY te.work_date, te.id`, params.id);
+    inv.expenses = all('SELECT * FROM expenses WHERE invoice_id=? ORDER BY expense_date, id', params.id);
+    inv.payments = all('SELECT p.*, u.name AS user_name FROM payments p LEFT JOIN users u ON u.id=p.created_by WHERE invoice_id=? ORDER BY payment_date, id', params.id);
+    inv.firm = settings();
+    return inv;
+  });
+  route('GET', '/api/cases/:id/unbilled', ({ params, query }) => {
+    mustGet('cases', params.id);
+    const u = unbilled(params.id, query.up_to || '9999-12-31');
+    return { time_count: u.time.length, expense_count: u.exp.length, time_total: u.time_total, expense_total: u.expense_total, total: u.total };
+  });
+  route('POST', '/api/invoices', async ({ req, user }) => {
+    requireRole(user, ...BILLING_ROLES);
+    const b = clean(await readJson(req), { case_id: 'int', issue_date: 'date', due_date: 'date', up_to: 'date', discount: 'real', tax_rate: 'real', notes: 'text' }, ['case_id']);
+    mustGet('cases', b.case_id);
+    const s = settings();
+    const issue = b.issue_date || today();
+    const due = b.due_date || addDays(issue, Number(s.payment_terms) || 0);
+    const u = unbilled(b.case_id, b.up_to || '9999-12-31');
+    if (!u.time.length && !u.exp.length) throw bad('There is no unbilled billable time or expenses on this matter.');
+    const discount = round2(Math.max(0, b.discount || 0));
+    if (discount > u.total) throw bad('Discount cannot be larger than the invoice amount');
+    const taxRate = b.tax_rate ?? (Number(s.tax_rate) || 0);
+    if (taxRate < 0 || taxRate > 100) throw bad('Tax rate must be between 0 and 100');
+    const tax = round2(((u.total - discount) * taxRate) / 100);
+    const id = tx(() => {
+      let seq = get('SELECT COUNT(*)+1 AS n FROM invoices').n;
+      let number;
+      do { number = `${s.invoice_prefix || ''}${String(seq++).padStart(4, '0')}`; } while (get('SELECT 1 FROM invoices WHERE number=?', number));
+      const newId = insert('invoices', { number, case_id: b.case_id, issue_date: issue, due_date: due, status: 'draft',
+        time_total: u.time_total, expense_total: u.expense_total, discount, tax_rate: taxRate, tax, total: round2(u.total - discount + tax),
+        notes: b.notes, created_by: user.id });
+      for (const r of u.time) run('UPDATE time_entries SET invoice_id=? WHERE id=?', newId, r.id);
+      for (const r of u.exp) run('UPDATE expenses SET invoice_id=? WHERE id=?', newId, r.id);
+      log(b.case_id, user.id, `Invoice ${number} created`);
+      return newId;
+    });
+    return { id };
+  });
+  route('PUT', '/api/invoices/:id', async ({ req, user, params }) => {
+    requireRole(user, ...BILLING_ROLES);
+    const prev = mustGet('invoices', params.id);
+    const b = clean(await readJson(req), { status: ['enum', 'invoice_status'], due_date: 'date', notes: 'text' }, [], true);
+    if (prev.status === 'void' && b.status && b.status !== 'void') throw bad('A void invoice cannot be reopened. Create a new invoice instead.');
+    if (b.status === 'paid') throw bad('Record a payment to mark an invoice as paid.');
+    tx(() => {
+      update('invoices', params.id, b);
+      if (b.status === 'void' && prev.status !== 'void') {
+        releaseEntries(params.id);
+        log(prev.case_id, user.id, `Invoice ${prev.number} voided`);
+      } else if (b.status && b.status !== prev.status) {
+        log(prev.case_id, user.id, `Invoice ${prev.number} marked ${b.status}`);
+      }
+    });
+    return { ok: true };
+  });
+  route('DELETE', '/api/invoices/:id', ({ user, params }) => {
+    requireRole(user, ...BILLING_ROLES);
+    const prev = mustGet('invoices', params.id);
+    if (!['draft', 'void'].includes(prev.status)) throw bad('Only draft or void invoices can be deleted. Void it first.');
+    tx(() => {
+      releaseEntries(params.id);
+      run('DELETE FROM invoices WHERE id=?', params.id);
+      log(prev.case_id, user.id, `Invoice ${prev.number} deleted`);
+    });
+    return { ok: true };
+  });
+  route('POST', '/api/invoices/:id/payments', async ({ req, user, params }) => {
+    requireRole(user, ...BILLING_ROLES);
+    const inv = get(INVOICE_SQL + ' WHERE i.id=?', params.id);
+    if (!inv) throw new HttpError(404, 'Invoice not found');
+    if (inv.status === 'void') throw bad('Cannot record a payment on a void invoice');
+    const b = clean(await readJson(req), { payment_date: 'date', amount: 'real', method: ['enum', 'payment_method'], reference: 'text' }, ['payment_date', 'amount']);
+    if (b.amount <= 0) throw bad('Amount must be greater than zero');
+    if (b.amount > round2(inv.total - inv.paid) + 0.005) throw bad(`Amount is more than the balance due (${round2(inv.total - inv.paid)})`);
+    tx(() => {
+      insert('payments', { ...b, invoice_id: inv.id, created_by: user.id });
+      if (inv.status === 'draft') run("UPDATE invoices SET status='sent' WHERE id=?", inv.id);
+      refreshInvoiceStatus(inv.id);
+      log(inv.case_id, user.id, `Payment of ${b.amount} recorded on invoice ${inv.number}`);
+    });
+    return { ok: true };
+  });
+  route('DELETE', '/api/payments/:id', ({ user, params }) => {
+    requireRole(user, ...BILLING_ROLES);
+    const p = mustGet('payments', params.id);
+    const inv = mustGet('invoices', p.invoice_id);
+    tx(() => {
+      run('DELETE FROM payments WHERE id=?', params.id);
+      refreshInvoiceStatus(inv.id);
+      log(inv.case_id, user.id, `Payment of ${p.amount} removed from invoice ${inv.number}`);
+    });
+    return { ok: true };
+  });
+
+  // ---------------------------------------------------------- task checklists (templates)
+  function cleanTemplate(body, partial) {
+    const obj = clean(body, { name: 'text', case_type: 'text' }, ['name'], partial);
+    if ('items' in body || !partial) {
+      if (!Array.isArray(body.items) || !body.items.length) throw bad('Add at least one task to the checklist');
+      obj.items = JSON.stringify(body.items.slice(0, 100).map((it) => {
+        const title = String(it.title || '').trim().slice(0, 500);
+        if (!title) throw bad('Every checklist task needs a title');
+        const days = Number(it.days) || 0;
+        if (!Number.isInteger(days) || Math.abs(days) > 3650) throw bad('Days must be a whole number');
+        const priority = ENUMS.priority.includes(it.priority) ? it.priority : 'normal';
+        return { title, days, priority };
+      }));
+    }
+    return obj;
+  }
+  route('GET', '/api/templates', () => all('SELECT * FROM templates ORDER BY name').map((t) => ({ ...t, items: JSON.parse(t.items) })));
+  route('POST', '/api/templates', async ({ req, user }) => {
+    if (!isManager(user)) throw new HttpError(403, 'Only partners or admins can manage checklists');
+    return { id: insert('templates', cleanTemplate(await readJson(req), false)) };
+  });
+  route('PUT', '/api/templates/:id', async ({ req, user, params }) => {
+    if (!isManager(user)) throw new HttpError(403, 'Only partners or admins can manage checklists');
+    mustGet('templates', params.id);
+    update('templates', params.id, cleanTemplate(await readJson(req), true));
+    return { ok: true };
+  });
+  route('DELETE', '/api/templates/:id', ({ user, params }) => {
+    if (!isManager(user)) throw new HttpError(403, 'Only partners or admins can manage checklists');
+    run('DELETE FROM templates WHERE id=?', params.id);
+    return { ok: true };
+  });
+  route('POST', '/api/cases/:id/apply-template', async ({ req, user, params }) => {
+    const c = mustGet('cases', params.id);
+    const b = clean(await readJson(req), { template_id: 'int', start_date: 'date', assignee_id: 'int' }, ['template_id']);
+    const t = mustGet('templates', b.template_id);
+    checkRefs(b);
+    const start = b.start_date || today();
+    const assignee = b.assignee_id ?? c.lead_attorney_id;
+    const items = JSON.parse(t.items);
+    tx(() => {
+      for (const it of items) {
+        insert('tasks', { case_id: c.id, title: it.title, due_date: addDays(start, it.days), priority: it.priority, assignee_id: assignee, status: 'todo', created_by: user.id });
+      }
+      log(c.id, user.id, `Checklist applied: ${t.name} (${items.length} tasks)`);
+    });
+    touchCase(c.id);
+    return { created: items.length };
+  });
+
+  // ---------------------------------------------------------- global search
+  route('GET', '/api/search', ({ query }) => {
+    const q = String(query.q || '').trim();
+    if (q.length < 2) throw bad('Enter at least 2 characters');
+    const like = `%${q}%`;
+    return {
+      cases: all(`SELECT c.id,c.title,c.internal_ref,c.case_number,c.status,cl.name AS client_name FROM cases c LEFT JOIN clients cl ON cl.id=c.client_id
+        WHERE c.title LIKE ? OR c.case_number LIKE ? OR c.internal_ref LIKE ? OR c.opposing_party LIKE ? OR c.court LIKE ? OR c.judge LIKE ? OR c.description LIKE ?
+        ORDER BY c.updated_at DESC LIMIT 20`, like, like, like, like, like, like, like),
+      clients: all('SELECT id,name,type,email,phone FROM clients WHERE name LIKE ? OR contact_person LIKE ? OR email LIKE ? OR phone LIKE ? ORDER BY name LIMIT 20', like, like, like, like),
+      contacts: all(`SELECT ct.id,ct.name,ct.role,ct.organization,ct.case_id,c.title AS case_title FROM contacts ct JOIN cases c ON c.id=ct.case_id
+        WHERE ct.name LIKE ? OR ct.organization LIKE ? OR ct.email LIKE ? ORDER BY ct.name LIMIT 20`, like, like, like),
+      documents: all(`SELECT d.id,d.name,d.category,d.case_id,c.title AS case_title FROM documents d JOIN cases c ON c.id=d.case_id
+        WHERE d.name LIKE ? ORDER BY d.created_at DESC LIMIT 20`, like),
+      notes: all(`SELECT n.id,n.body,n.case_id,n.created_at,c.title AS case_title FROM notes n JOIN cases c ON c.id=n.case_id
+        WHERE n.body LIKE ? ORDER BY n.created_at DESC LIMIT 20`, like),
+      tasks: all(`SELECT t.id,t.title,t.status,t.due_date,t.case_id,c.title AS case_title FROM tasks t LEFT JOIN cases c ON c.id=t.case_id
+        WHERE t.title LIKE ? OR t.notes LIKE ? ORDER BY t.due_date LIMIT 20`, like, like),
+      events: all(`SELECT e.id,e.title,e.kind,e.starts_at,e.case_id,c.title AS case_title FROM events e JOIN cases c ON c.id=e.case_id
+        WHERE e.title LIKE ? OR e.location LIKE ? OR e.notes LIKE ? OR e.outcome LIKE ? ORDER BY e.starts_at DESC LIMIT 20`, like, like, like, like),
+      invoices: all(`SELECT i.id,i.number,i.total,i.status,c.title AS case_title FROM invoices i JOIN cases c ON c.id=i.case_id
+        WHERE i.number LIKE ? ORDER BY i.issue_date DESC LIMIT 20`, like),
+    };
+  });
+
+  // ---------------------------------------------------------- notifications (computed live)
+  route('GET', '/api/notifications', ({ user }) => {
+    const t = today();
+    const items = [];
+    // Partners and admins see firm-wide alerts; everyone else sees alerts for the matters they work on.
+    const scope = isManager(user) ? "1=1" : MY_CASES;
+    const mine = isManager(user) ? [] : [user.id, user.id];
+    for (const e of all(`${EVENT_SQL} WHERE e.completed=0 AND e.starts_at>=? AND e.starts_at<? AND ${scope} ORDER BY e.starts_at`, t, addDays(t, 3), ...mine)) {
+      const d = e.starts_at.slice(0, 10);
+      items.push({ level: d === t ? 'high' : 'normal', text: `${e.kind === 'deadline' ? 'Deadline' : label(e.kind)} ${d === t ? 'today' : d === addDays(t, 1) ? 'tomorrow' : `on ${d}`}: ${e.title}`, sub: e.case_title, link: `#/cases/${e.case_id}/schedule`, date: e.starts_at });
+    }
+    for (const e of all(`${EVENT_SQL} WHERE e.completed=0 AND e.starts_at<? AND ${scope} ORDER BY e.starts_at DESC LIMIT 20`, t, ...mine)) {
+      items.push({ level: 'high', text: `Record outcome: ${e.title} (${e.starts_at.slice(0, 10)})`, sub: e.case_title, link: `#/cases/${e.case_id}/schedule`, date: e.starts_at });
+    }
+    for (const k of all(`${TASK_SQL} WHERE t.assignee_id=? AND t.status!='done' AND t.due_date IS NOT NULL AND t.due_date<=? ORDER BY t.due_date`, user.id, addDays(t, 1))) {
+      const txt = k.due_date < t ? `Overdue task: ${k.title}` : k.due_date === t ? `Task due today: ${k.title}` : `Task due tomorrow: ${k.title}`;
+      items.push({ level: k.due_date <= t ? 'high' : 'normal', text: txt, sub: k.case_title || 'General', link: k.case_id ? `#/cases/${k.case_id}/tasks` : '#/tasks', date: k.due_date });
+    }
+    for (const c of all(`SELECT c.id,c.title,c.statute_of_limitations FROM cases c WHERE c.statute_of_limitations IS NOT NULL AND c.statute_of_limitations<=?
+        AND c.status NOT IN ('settled','judgment','closed') AND ${scope}`, addDays(t, 60), ...mine)) {
+      items.push({ level: 'high', text: `Limitation deadline ${c.statute_of_limitations}`, sub: c.title, link: `#/cases/${c.id}`, date: c.statute_of_limitations });
+    }
+    if (BILLING_ROLES.includes(user.role)) {
+      for (const i of all(`${INVOICE_SQL} WHERE i.status='sent' AND i.due_date<? ORDER BY i.due_date`, t)) {
+        items.push({ level: 'normal', text: `Invoice ${i.number} overdue (due ${i.due_date})`, sub: i.client_name || i.case_title, link: `#/invoices/${i.id}`, date: i.due_date });
+      }
+    }
+    return items;
+  });
+
+  // ---------------------------------------------------------- calendar feed (iCalendar)
+  function icsFor(events) {
+    const esc = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+    const fold = (line) => line.match(/.{1,73}/g).join('\r\n ');
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Litigation Manager//EN', 'CALSCALE:GREGORIAN', `X-WR-CALNAME:${esc(settings().firm_name)} — Court calendar`];
+    for (const e of events) {
+      const [d, tm] = e.starts_at.split('T');
+      const ymd = d.replace(/-/g, '');
+      lines.push('BEGIN:VEVENT', `UID:event-${e.id}@litigation-manager`, `DTSTAMP:${stamp}`);
+      if (tm) {
+        const [hh, mm] = tm.split(':').map(Number);
+        const end = new Date(Date.UTC(2000, 0, 1, hh + 1, mm));
+        const endDay = end.getUTCDate() === 2 ? addDays(d, 1).replace(/-/g, '') : ymd;
+        lines.push(`DTSTART:${ymd}T${String(hh).padStart(2, '0')}${String(mm).padStart(2, '0')}00`,
+          `DTEND:${endDay}T${String(end.getUTCHours()).padStart(2, '0')}${String(end.getUTCMinutes()).padStart(2, '0')}00`);
+      } else {
+        lines.push(`DTSTART;VALUE=DATE:${ymd}`);
+      }
+      lines.push(`SUMMARY:${esc(`[${label(e.kind)}] ${e.title} — ${e.internal_ref || ''} ${e.case_title}`)}`);
+      if (e.location) lines.push(`LOCATION:${esc(e.location)}`);
+      if (e.notes) lines.push(`DESCRIPTION:${esc(e.notes)}`);
+      if (e.completed) lines.push('STATUS:CONFIRMED');
+      lines.push('END:VEVENT');
+    }
+    lines.push('END:VCALENDAR');
+    return lines.map(fold).join('\r\n') + '\r\n';
+  }
+  const icsEvents = () => all(`${EVENT_SQL} WHERE e.starts_at>=? ORDER BY e.starts_at`, addDays(today(), -90));
+  route('GET', '/api/me/calendar-feed', ({ user }) => {
+    let tok = get('SELECT ical_token FROM users WHERE id=?', user.id).ical_token;
+    if (!tok) { tok = crypto.randomBytes(24).toString('hex'); run('UPDATE users SET ical_token=? WHERE id=?', tok, user.id); }
+    return { path: `/api/ical/${tok}.ics` };
+  });
+  route('POST', '/api/me/calendar-feed/reset', ({ user }) => {
+    const tok = crypto.randomBytes(24).toString('hex');
+    run('UPDATE users SET ical_token=? WHERE id=?', tok, user.id);
+    return { path: `/api/ical/${tok}.ics` };
+  });
+  route('GET', '/api/ical/:token.ics', ({ params, res }) => {
+    const u = get('SELECT id FROM users WHERE ical_token=? AND active=1', params.token);
+    if (!u) throw new HttpError(404, 'Calendar feed not found');
+    res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'no-cache' });
+    res.end(icsFor(icsEvents()));
+    return undefined;
+  }, { auth: false });
+  route('GET', '/api/calendar.ics', ({ res }) => {
+    res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Content-Disposition': 'attachment; filename="court-calendar.ics"' });
+    res.end(icsFor(icsEvents()));
+    return undefined;
+  });
+
+  // ---------------------------------------------------------- backup (admin)
+  route('GET', '/api/admin/backup', ({ user, res }) => {
+    requireRole(user, 'admin');
+    const tmp = path.join(os.tmpdir(), `litigation-backup-${crypto.randomBytes(8).toString('hex')}.db`);
+    db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+    const size = fs.statSync(tmp).size;
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': size,
+      'Content-Disposition': `attachment; filename="litigation-backup-${today()}.db"` });
+    const stream = fs.createReadStream(tmp);
+    stream.pipe(res);
+    stream.on('close', () => fs.rm(tmp, { force: true }, () => {}));
+    return undefined;
   });
 
   // CSV export
@@ -627,7 +1028,7 @@ function createApp({ dataDir = DATA_DIR, seed = true } = {}) {
         const user = currentUser(req);
         if (r.auth && !user) throw new HttpError(401, 'Please sign in');
         const params = {};
-        r.keys.forEach((k, i) => { params[k] = Number(m[i + 1]); });
+        r.keys.forEach((k, i) => { params[k] = k === 'token' ? m[i + 1] : Number(m[i + 1]); });
         const query = Object.fromEntries(url.searchParams);
         const result = await r.handler({ req, res, user, params, query });
         if (result !== undefined) send(res, 200, result);
@@ -647,9 +1048,22 @@ function createApp({ dataDir = DATA_DIR, seed = true } = {}) {
 
 if (require.main === module) {
   const app = createApp({ seed: process.env.SEED !== '0' });
-  http.createServer(app.handle).listen(PORT, HOST, () => {
+  const server = http.createServer(app.handle);
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') console.error(`Port ${PORT} is already in use. Is the app already running? Close the other window, or start with a different PORT.`);
+    else console.error(err);
+    process.exit(1);
+  });
+  server.listen(PORT, HOST, () => {
     console.log(`Litigation Manager running at http://localhost:${PORT}`);
     console.log(`Data directory: ${DATA_DIR}`);
+    console.log('Keep this window open while you use the app. Press Ctrl+C to stop.');
+    if (process.argv.includes('--open')) {
+      const url = `http://localhost:${PORT}`;
+      const { exec } = require('node:child_process');
+      const cmd = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
+      exec(cmd, () => {});
+    }
   });
 }
 

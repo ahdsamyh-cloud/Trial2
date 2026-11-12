@@ -9,7 +9,10 @@ Zero npm dependencies. It uses Node's built-in HTTP server and built-in SQLite
 
 ## Quick start
 
-Requires **Node.js 22.5 or newer**.
+**Beginners:** read `START-HERE.txt`. Install Node.js (LTS) from nodejs.org, then
+double-click `start-windows.bat` (Windows) or `start-mac.command` (Mac).
+
+Requires **Node.js 22.13 or newer** (any current LTS release).
 
 ```bash
 cd litigation-manager
@@ -46,22 +49,46 @@ Environment variables: `PORT` (default 3000), `HOST` (default 0.0.0.0),
   dispute, fee arrangement, summary and outcome. You can search, filter and
   export to CSV.
 - **Per-matter tabs**:
-  - Hearings and deadlines
-  - Tasks
+  - Hearings and deadlines, with **hearing outcomes**: record what happened
+    and schedule the next date in one step
+  - Tasks, with **checklists** that create a standard set of tasks at once
   - Document upload and download (up to 25 MB per file, categorised)
   - Notes
-  - Time and billing, with totals
+  - Contacts: witnesses, experts, opposing counsel, clerks, insurers, mediators
+  - Time and billing: time entries, expenses, invoices and totals
   - Activity: a full audit trail of who changed what
+- **Case board**: a kanban view of matters by status; drag a card to change it.
+- **Billing**: create invoices from a matter's unbilled time and expenses,
+  with tax/VAT, discount and notes. Mark them sent, record full or partial
+  payments, void them, and print or save them as PDF. Billed entries are
+  locked so invoices can't silently change.
+- **Expenses**: court and filing fees, experts, travel and other costs,
+  billable or not.
+- **Timer**: a stopwatch in the top bar that turns into a time entry.
+- **Global search** across cases, clients, contacts, hearings, tasks,
+  documents, notes and invoices.
+- **Notifications** (bell icon): hearings in the next 3 days, past hearings
+  without an outcome, tasks due or overdue, limitation dates within 60 days,
+  and overdue invoices. Partners and admins see the whole firm.
+- **Deadline calculator**: calendar or court (business) days, before or after
+  a trigger date, skipping weekends and the firm's court holidays, then adds
+  the result to a matter's calendar.
+- **Calendar sync**: a private iCalendar link for Outlook, Google or Apple
+  Calendar, plus a downloadable `.ics` file.
+- **Settings** (admin): firm name and address for invoices, currency, default
+  tax rate, invoice number prefix, payment terms, court holidays, checklists,
+  and one-click database backup.
 - **Calendar**: a month grid plus agenda covering all matters, with a "my
   matters only" filter. Click a day to schedule something.
 - **Tasks**: firm-wide or "assigned to me", with due-date warnings.
 - **Clients**: contact details and each client's matters.
-- **Time**: entries across matters, filtered by timekeeper and date range.
-  The rate defaults to the timekeeper's hourly rate.
+- **Time & expenses**: entries across matters, filtered by timekeeper and date
+  range. The rate defaults to the timekeeper's hourly rate.
 - **Conflict check**: searches a name against clients, adverse parties,
-  opposing counsel and matter titles.
-- **Reports**: matters by status, practice area and attorney, plus hours and
-  billable value by timekeeper and by matter. Pages are printable.
+  opposing counsel, matter titles and people on matters.
+- **Reports**: matters by status, practice area and attorney; amounts
+  invoiced, collected and spent on expenses; hours and billable value by
+  timekeeper and by matter. Pages are printable.
 - **Users** (admin only): add users, set roles and rates, deactivate
   accounts, reset passwords.
 
@@ -69,7 +96,9 @@ Environment variables: `PORT` (default 3000), `HOST` (default 0.0.0.0),
 
 All signed-in users can create and edit matters, clients, events, tasks,
 notes, documents and time. Only **partners and admins** can delete matters
-and clients. Only **admins** can manage users. Users can delete their own
+and clients, and manage checklists. Only **admins, partners and attorneys** can
+create invoices and record payments. Only **admins** can manage users and
+settings and download backups. Users can delete their own
 notes; partners and admins can delete anyone's.
 
 ## Security notes
@@ -92,8 +121,12 @@ npm test
 ```
 
 The tests cover authentication, role permissions, cross-origin blocking,
-and the full lifecycle of a matter (events, tasks, notes, time, document
-upload and download, closing a matter, audit log, CSV export and deletion).
+the full lifecycle of a matter (events, tasks, notes, time, document upload
+and download, closing a matter, audit log, CSV export and deletion), billing
+(invoice totals with tax and discount, locking billed entries, partial and
+full payments, overpayment rejection, voiding), hearing outcomes, checklists,
+contacts, search, notifications, settings validation, the calendar feed and
+backups.
 
 ## Layout
 

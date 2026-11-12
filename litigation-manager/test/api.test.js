@@ -113,3 +113,84 @@ test('blocks cross-origin writes', async () => {
   const r = await call('POST', '/api/notes', { case_id: 1, body: 'x' }, { origin: 'http://evil.example' });
   assert.equal(r.status, 403);
 });
+
+test('billing: invoice, payment, lock, void', async () => {
+  await call('POST', '/api/logout');
+  await call('POST', '/api/login', { email: 'sara@firm.local', password: 'password' });
+  const c = (await call('POST', '/api/cases', { title: 'Billing test' })).body.id;
+  const te = (await call('POST', '/api/time', { case_id: c, work_date: '2026-01-10', hours: 2 })).body.id; // 2 x 450
+  await call('POST', '/api/expenses', { case_id: c, expense_date: '2026-01-11', amount: 100, category: 'court_fees' });
+  await call('POST', '/api/expenses', { case_id: c, expense_date: '2026-01-11', amount: 50, billable: false });
+  const pre = (await call('GET', `/api/cases/${c}/unbilled`)).body;
+  assert.equal(pre.total, 1000);
+
+  const inv = await call('POST', '/api/invoices', { case_id: c, tax_rate: 10, discount: 100 });
+  assert.equal(inv.status, 200, JSON.stringify(inv.body));
+  let i = (await call('GET', `/api/invoices/${inv.body.id}`)).body;
+  assert.equal(i.total, 990); // (1000 - 100) * 1.1
+  assert.equal(i.time.length, 1);
+  assert.equal(i.expenses.length, 1);
+  assert.equal((await call('POST', '/api/invoices', { case_id: c })).status, 400, 'nothing left to bill');
+  assert.equal((await call('PUT', `/api/time/${te}`, { hours: 5 })).status, 400, 'billed entries are locked');
+
+  assert.equal((await call('POST', `/api/invoices/${i.id}/payments`, { payment_date: '2026-02-01', amount: 2000 })).status, 400, 'overpayment');
+  await call('POST', `/api/invoices/${i.id}/payments`, { payment_date: '2026-02-01', amount: 500 });
+  i = (await call('GET', `/api/invoices/${i.id}`)).body;
+  assert.equal(i.status, 'sent');
+  assert.equal(i.balance, 490);
+  await call('POST', `/api/invoices/${i.id}/payments`, { payment_date: '2026-02-02', amount: 490 });
+  i = (await call('GET', `/api/invoices/${i.id}`)).body;
+  assert.equal(i.status, 'paid');
+  await call('DELETE', `/api/payments/${i.payments[1].id}`);
+  assert.equal((await call('GET', `/api/invoices/${i.id}`)).body.status, 'sent');
+
+  assert.equal((await call('PUT', `/api/invoices/${i.id}`, { status: 'void' })).status, 200);
+  assert.equal((await call('GET', `/api/cases/${c}/unbilled`)).body.total, 1000, 'voiding releases entries');
+  assert.equal((await call('DELETE', `/api/invoices/${i.id}`)).status, 200);
+});
+
+test('hearing outcome schedules next date; checklists; contacts', async () => {
+  const ev = (await call('POST', '/api/events', { case_id: 1, title: 'Mention hearing', kind: 'hearing', starts_at: '2026-01-01T09:00' })).body.id;
+  const r = await call('POST', `/api/events/${ev}/outcome`, { outcome: 'Adjourned', next_at: '2030-02-01T09:00' });
+  assert.equal(r.status, 200);
+  assert.ok(r.body.next_id);
+  const evs = (await call('GET', '/api/events?case_id=1')).body;
+  assert.equal(evs.find((e) => e.id === ev).outcome, 'Adjourned');
+  assert.ok(evs.find((e) => e.id === r.body.next_id));
+
+  const tpls = (await call('GET', '/api/templates')).body;
+  assert.ok(tpls.length >= 3);
+  const ap = await call('POST', '/api/cases/2/apply-template', { template_id: tpls[0].id, start_date: '2030-01-01' });
+  assert.equal(ap.body.created, tpls[0].items.length);
+
+  assert.equal((await call('POST', '/api/contacts', { case_id: 2, name: 'Zed Witness', role: 'witness' })).status, 200);
+  const conf = (await call('GET', '/api/conflicts?q=Zed')).body;
+  assert.equal(conf.contacts.length, 1);
+});
+
+test('search, notifications, settings, calendar feed, backup', async () => {
+  const s = (await call('GET', '/api/search?q=Blue%20Ocean')).body;
+  assert.ok(s.cases.length >= 1);
+  assert.ok(Array.isArray((await call('GET', '/api/notifications')).body));
+
+  assert.equal((await call('PUT', '/api/settings', { currency: 'EUR' })).status, 403, 'partner cannot change settings');
+  await call('POST', '/api/logout');
+  await call('POST', '/api/login', { email: 'admin@firm.local', password: 'admin123' });
+  assert.equal((await call('PUT', '/api/settings', { currency: 'xx' })).status, 400);
+  const st = await call('PUT', '/api/settings', { currency: 'eur', holidays: '2026-12-25, 2026-12-26' });
+  assert.equal(st.body.currency, 'EUR');
+  assert.equal(st.body.holidays, '2026-12-25\n2026-12-26');
+
+  const feed = (await call('GET', '/api/me/calendar-feed')).body.path;
+  const saved = cookie; cookie = '';
+  const ics = await call('GET', feed);
+  cookie = saved;
+  assert.equal(ics.status, 200);
+  assert.match(ics.body, /BEGIN:VCALENDAR[\s\S]*BEGIN:VEVENT/);
+  assert.equal((await call('GET', '/api/ical/' + 'a'.repeat(48) + '.ics')).status, 404);
+
+  const bk = await fetch(base + '/api/admin/backup', { headers: { cookie } });
+  assert.equal(bk.status, 200);
+  const buf = Buffer.from(await bk.arrayBuffer());
+  assert.equal(buf.subarray(0, 15).toString(), 'SQLite format 3');
+});

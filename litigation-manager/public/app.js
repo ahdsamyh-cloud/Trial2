@@ -49,8 +49,17 @@ const fmtStamp = (s) => { // SQLite UTC 'YYYY-MM-DD HH:MM:SS' -> local
   const d = new Date(`${s.replace(' ', 'T')}Z`);
   return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
-const money = (n) => (n == null || n === '' ? '' : Number(n).toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }));
-const money2 = (n) => Number(n || 0).toLocaleString(undefined, { style: 'currency', currency: 'USD' });
+function fmtMoney(n, digits) {
+  try {
+    return Number(n || 0).toLocaleString(undefined, { style: 'currency', currency: state.settings?.currency || 'USD', minimumFractionDigits: digits, maximumFractionDigits: digits });
+  } catch { return `${state.settings?.currency || ''} ${Number(n || 0).toFixed(digits)}`; }
+}
+const money = (n) => (n == null || n === '' ? '' : fmtMoney(n, 0));
+const money2 = (n) => fmtMoney(n, 2);
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
+};
 const hours = (n) => `${Math.round(Number(n || 0) * 100) / 100}h`;
 const bytes = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 function daysFrom(s) {
@@ -90,6 +99,11 @@ const ICONS = {
   reports: 'M5 9.2h3V19H5zM10.6 5h2.8v14h-2.8zm5.6 8H19v6h-2.8z',
   users: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8m0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4',
   logo: 'M12 2 3 6v2h18V6zM5 10v8h2v-8zm6 0v8h2v-8zm6 0v8h2v-8zM3 20v2h18v-2z',
+  board: 'M4 4h4v16H4zm6 0h4v10h-4zm6 0h4v13h-4z',
+  billing: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm-1 7V3.5L18.5 9zM8 13h8v2H8zm0 4h5v2H8z',
+  calc: 'M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m0 2v4h10V4zm0 6v2h2v-2zm4 0v2h2v-2zm4 0v2h2v-2zm-8 4v2h2v-2zm4 0v2h2v-2zm4 0v6h2v-6zm-8 4v2h2v-2zm4 0v2h2v-2z',
+  settings: 'M19.14 12.94a7 7 0 0 0 0-1.88l2.03-1.58-1.92-3.32-2.39.96a7 7 0 0 0-1.63-.94L14.87 3.6h-3.84l-.36 2.58a7 7 0 0 0-1.63.94l-2.39-.96-1.92 3.32 2.03 1.58a7 7 0 0 0 0 1.88l-2.03 1.58 1.92 3.32 2.39-.96c.5.38 1.05.7 1.63.94l.36 2.58h3.84l.36-2.58a7 7 0 0 0 1.63-.94l2.39.96 1.92-3.32zM12.95 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7',
+  bell: 'M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2m6-6V11a6 6 0 0 0-5-5.91V4a1 1 0 0 0-2 0v1.09A6 6 0 0 0 6 11v5l-2 2v1h16v-1z',
 };
 const icon = (k) => raw(`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[k]}"/></svg>`);
 
@@ -109,12 +123,13 @@ const GET = (u) => api('GET', u);
 const qs = (o) => { const p = new URLSearchParams(); Object.entries(o).forEach(([k, v]) => { if (v !== '' && v != null) p.set(k, v); }); const s = p.toString(); return s ? `?${s}` : ''; };
 
 // ------------------------------------------------------------------ state
-const state = { me: null, enums: {}, closed: [], users: [], clients: [] };
+const state = { me: null, enums: {}, closed: [], users: [], clients: [], settings: {}, notifications: [] };
+const canBill = () => ['admin', 'partner', 'attorney'].includes(state.me?.role);
 const userName = (id) => state.users.find((u) => u.id === id)?.name || '';
 const activeUsers = () => state.users.filter((u) => u.active);
 const isManager = () => ['admin', 'partner'].includes(state.me?.role);
 async function loadLookups() {
-  [state.users, state.clients] = await Promise.all([GET('/api/users'), GET('/api/clients')]);
+  [state.users, state.clients, state.settings] = await Promise.all([GET('/api/users'), GET('/api/clients'), GET('/api/settings')]);
 }
 
 // ------------------------------------------------------------------ event delegation
@@ -365,16 +380,17 @@ function editClient(c, after) {
 
 // ------------------------------------------------------------------ shell & router
 const NAV = [
-  ['dashboard', 'Dashboard', 'dash'], ['cases', 'Cases', 'cases'], ['calendar', 'Calendar', 'cal'], ['tasks', 'Tasks', 'tasks'],
-  ['clients', 'Clients', 'clients'], ['time', 'Time', 'time'], ['conflicts', 'Conflict check', 'conflict'], ['reports', 'Reports', 'reports'],
+  ['dashboard', 'Dashboard', 'dash'], ['cases', 'Cases', 'cases'], ['board', 'Case board', 'board'], ['calendar', 'Calendar', 'cal'],
+  ['tasks', 'Tasks', 'tasks'], ['clients', 'Clients', 'clients'], ['time', 'Time & expenses', 'time'], ['billing', 'Billing', 'billing'],
+  ['conflicts', 'Conflict check', 'conflict'], ['deadlines', 'Deadline calculator', 'calc'], ['reports', 'Reports', 'reports'],
 ];
 
 function renderShell() {
-  const nav = [...NAV, ...(state.me.role === 'admin' ? [['users', 'Users', 'users']] : [])];
+  const nav = [...NAV, ...(state.me.role === 'admin' ? [['settings', 'Settings', 'settings'], ['users', 'Users', 'users']] : [])];
   $('#app').innerHTML = val(h`
     <div class="shell">
       <aside class="sidebar" id="sidebar">
-        <div class="logo">${icon('logo')} Litigation Manager</div>
+        <div class="logo">${icon('logo')} <span>Litigation Manager<div class="firm">${state.settings.firm_name}</div></span></div>
         <nav class="nav">${nav.map(([k, l, i]) => h`<a href="#/${k}" data-nav="${k}">${icon(i)} ${l}</a>`)}</nav>
         <div class="spacer"></div>
         <div class="userbox">
@@ -383,7 +399,16 @@ function renderShell() {
           <div class="actions"><button class="ghost" data-act="go" data-href="#/account">Account</button><button class="ghost" data-act="logout">Sign out</button></div>
         </div>
       </aside>
-      <main class="main"><button class="menu-toggle" data-act="toggleMenu">☰ Menu</button><div id="view"></div></main>
+      <main class="main">
+        <div class="topbar">
+          <button class="menu-toggle" data-act="toggleMenu">☰ Menu</button>
+          <form class="search-box" data-submit="globalSearch" role="search"><input type="search" name="q" placeholder="Search cases, clients, contacts, documents, notes…" aria-label="Search everything"></form>
+          <div id="timer" class="timer"></div>
+          <div class="bell-wrap"><button class="bell" data-act="toggleBell" aria-label="Notifications">${icon('bell')}<span id="bell-count" class="bell-count" hidden></span></button>
+            <div id="bell-panel" class="bell-panel" hidden></div></div>
+        </div>
+        <div id="view"></div>
+      </main>
     </div>`);
 }
 
@@ -403,6 +428,12 @@ const ROUTES = [
   [/^\/conflicts$/, () => viewConflicts()],
   [/^\/reports$/, () => viewReports()],
   [/^\/users$/, () => viewUsers()],
+  [/^\/board$/, () => viewBoard()],
+  [/^\/billing$/, () => viewBilling()],
+  [/^\/invoices\/(\d+)$/, (m) => viewInvoice(Number(m[1]))],
+  [/^\/deadlines$/, () => viewDeadlines()],
+  [/^\/search$/, (m, q) => viewSearch(q.get('q') || '')],
+  [/^\/settings$/, () => viewSettings()],
   [/^\/account$/, () => viewAccount()],
 ];
 
@@ -411,13 +442,71 @@ const baseActs = {
   toggleMenu: () => $('#sidebar').classList.toggle('open'),
   closeModal: () => closeModal(),
   go: (el) => { location.hash = el.dataset.href; },
+  globalSearch: (form) => { const q = form.q.value.trim(); if (q.length >= 2) location.hash = `#/search?q=${encodeURIComponent(q)}`; },
+  toggleBell: () => { const p = $('#bell-panel'); p.hidden = !p.hidden; },
+  timerStart: () => { store.set('lm_timer', { running: true, start: Date.now(), elapsed: 0 }); renderTimer(); },
+  timerPause: () => {
+    const t = store.get('lm_timer'); if (!t) return;
+    if (t.running) store.set('lm_timer', { running: false, elapsed: t.elapsed + (Date.now() - t.start) });
+    else store.set('lm_timer', { running: true, start: Date.now(), elapsed: t.elapsed });
+    renderTimer();
+  },
+  timerStop: async () => {
+    const ms = timerMs();
+    store.set('lm_timer', null); renderTimer();
+    const hrs = Math.max(0.1, Math.ceil((ms / 3600000) * 10) / 10);
+    editTime({ hours: hrs, description: '' }, { caseOpts: await caseOptions(), after: () => { if (/^#\/(time|cases)/.test(location.hash)) rerender(); } });
+  },
+  timerDiscard: async () => { if (await confirmDialog('Discard the running timer?', 'Discard')) { store.set('lm_timer', null); renderTimer(); } },
 };
+
+// ------------------------------------------------------------------ timer
+function timerMs() {
+  const t = store.get('lm_timer');
+  if (!t) return 0;
+  return t.elapsed + (t.running ? Date.now() - t.start : 0);
+}
+function fmtClock(ms) {
+  const sec = Math.floor(ms / 1000);
+  return `${pad(Math.floor(sec / 3600))}:${pad(Math.floor((sec % 3600) / 60))}:${pad(sec % 60)}`;
+}
+function renderTimer() {
+  const el = $('#timer'); if (!el) return;
+  const t = store.get('lm_timer');
+  el.innerHTML = val(t
+    ? h`<span class="clock ${t.running ? 'running' : ''}" id="timer-clock">${fmtClock(timerMs())}</span>
+      <button class="link" data-act="timerPause" title="${t.running ? 'Pause' : 'Resume'}">${t.running ? '⏸' : '▶'}</button>
+      <button class="link" data-act="timerStop" title="Stop and log time">■ Log</button>
+      <button class="link danger" data-act="timerDiscard" title="Discard">✕</button>`
+    : h`<button data-act="timerStart" title="Start a stopwatch to time your work">⏱ Start timer</button>`);
+}
+setInterval(() => { const c = $('#timer-clock'); if (c) c.textContent = fmtClock(timerMs()); }, 1000);
+
+// ------------------------------------------------------------------ notifications
+async function loadNotifications() {
+  try { state.notifications = await GET('/api/notifications'); } catch { return; }
+  const n = state.notifications.length;
+  const badgeEl = $('#bell-count'); const panel = $('#bell-panel');
+  if (!badgeEl) return;
+  badgeEl.hidden = !n; badgeEl.textContent = n > 99 ? '99+' : n;
+  panel.innerHTML = val(h`<div class="bell-head"><b>Notifications</b><span class="muted small">${n} item${n === 1 ? '' : 's'}</span></div>
+    ${n ? h`<ul class="list">${state.notifications.map((x) => h`<li><span class="dot ${x.level}"></span><a class="grow" href="${x.link}">${x.text}<div class="muted small">${x.sub}</div></a></li>`)}</ul>`
+    : h`<div class="empty">You're all caught up.</div>`}`);
+}
+document.addEventListener('click', (e) => {
+  const p = $('#bell-panel');
+  if (p && !p.hidden && !e.target.closest('.bell-wrap')) p.hidden = true;
+  if (p && !p.hidden && e.target.closest('#bell-panel a')) p.hidden = true;
+});
 
 async function router() {
   if (!state.me) return;
-  const path = location.hash.replace(/^#/, '') || '/dashboard';
+  const [path0, qstr] = location.hash.replace(/^#/, '').split('?');
+  const path = path0 || '/dashboard';
+  const query = new URLSearchParams(qstr || '');
   const top = path.split('/')[1];
-  $$('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === top));
+  const navKey = top === 'invoices' ? 'billing' : top;
+  $$('[data-nav]').forEach((a) => a.classList.toggle('active', a.dataset.nav === navKey));
   $('#sidebar')?.classList.remove('open');
   closeModal();
   acts = { ...baseActs };
@@ -425,7 +514,8 @@ async function router() {
     const m = path.match(re);
     if (m) {
       loading();
-      try { await fn(m); } catch (err) { if (err.message !== 'Session expired') setView(h`<div class="card"><div class="empty">${err.message}</div></div>`); }
+      loadNotifications();
+      try { await fn(m, query); } catch (err) { if (err.message !== 'Session expired') setView(h`<div class="card"><div class="empty">${err.message}</div></div>`); }
       return;
     }
   }
@@ -502,6 +592,8 @@ async function viewDashboard() {
       <a class="card stat" href="#/calendar"><div class="label">Events next 7 days</div><div class="value">${c.events_week}</div></a>
       <a class="card stat ${c.overdue_tasks ? 'alert' : ''}" href="#/tasks"><div class="label">Overdue tasks</div><div class="value">${c.overdue_tasks}</div></a>
       <a class="card stat" href="#/time"><div class="label">My hours this month</div><div class="value">${hours(c.my_hours_month)}</div></a>
+      ${canBill() ? h`<a class="card stat" href="#/billing"><div class="label">Unbilled work</div><div class="value">${money(c.unbilled)}</div></a>
+      <a class="card stat" href="#/billing"><div class="label">Outstanding invoices</div><div class="value">${money(c.outstanding)}</div></a>` : ''}
     </div>
     ${d.missed.length ? h`<div class="card" style="margin-bottom:16px;border-color:#fecdca"><div class="card-head"><h2 class="overdue">Past events not marked done</h2></div>
       <div class="card-body flush">${listOrEmpty(d.missed, (e) => eventItem(e), '')}</div></div>` : ''}
@@ -567,13 +659,16 @@ async function viewCase(id, tab) {
   const c = await GET(`/api/cases/${id}`);
   const reload = () => rerender();
   const TABS = [['overview', 'Overview'], ['schedule', 'Hearings & deadlines', c.counts.events], ['tasks', 'Tasks', c.counts.tasks],
-    ['documents', 'Documents', c.counts.documents], ['notes', 'Notes', c.counts.notes], ['time', 'Time & billing'], ['activity', 'Activity']];
+    ['documents', 'Documents', c.counts.documents], ['notes', 'Notes', c.counts.notes], ['contacts', 'Contacts', c.counts.contacts],
+    ['billing', 'Time & billing'], ['activity', 'Activity']];
+  if (tab === 'time') tab = 'billing';
   Object.assign(acts, {
     editCase: () => editCase(c, reload),
     deleteCase: async () => {
       if (!(await confirmDialog(h`Delete <b>${c.title}</b> and all its events, tasks, notes, documents and time entries? This cannot be undone.`))) return;
       await api('DELETE', `/api/cases/${id}`); toast('Matter deleted'); location.hash = '#/cases';
     },
+    printCase: () => { if (tab !== 'overview') { location.hash = `#/cases/${id}`; setTimeout(() => window.print(), 600); } else window.print(); },
     quickStatus: async (el) => { await api('PUT', `/api/cases/${id}`, { status: el.value }); toast('Status updated'); reload(); },
   });
   const head = h`
@@ -584,11 +679,13 @@ async function viewCase(id, tab) {
       </div>
       <div class="actions">
         <select data-change="quickStatus" aria-label="Change status" style="width:auto">${state.enums.case_status.map((s) => h`<option value="${s}"${s === c.status ? raw(' selected') : ''}>${label(s)}</option>`)}</select>
+        <button data-act="printCase">Print summary</button>
         <button data-act="editCase">Edit</button>
         ${isManager() ? h`<button class="danger" data-act="deleteCase">Delete</button>` : ''}
       </div></div>
     <nav class="tabs">${TABS.map(([k, l, n]) => h`<a href="#/cases/${id}/${k}" class="${k === tab ? 'active' : ''}">${l}${n ? h`<span class="count">${n}</span>` : ''}</a>`)}</nav>`;
-  const body = await ({ overview: caseOverview, schedule: caseSchedule, tasks: caseTasks, documents: caseDocuments, notes: caseNotes, time: caseTime, activity: caseActivity }[tab] || caseOverview)(c, reload);
+  const body = await ({ overview: caseOverview, schedule: caseSchedule, tasks: caseTasks, documents: caseDocuments, notes: caseNotes,
+    contacts: caseContacts, billing: caseBilling, activity: caseActivity }[tab] || caseOverview)(c, reload);
   setView(h`${head}${body}`);
 }
 
@@ -616,7 +713,9 @@ function caseOverview(c) {
       ['Next event', c.next_event ? h`<a href="#/cases/${c.id}/schedule">${fmtDateTime(c.next_event)}</a>` : '—'],
       ['Open tasks', h`<a href="#/cases/${c.id}/tasks">${c.open_tasks}</a>`],
       ['Documents', h`<a href="#/cases/${c.id}/documents">${c.counts.documents}</a>`],
-      ['Hours recorded', hours(c.totals.hours)], ['Billable value', money2(c.totals.billable_value)],
+      ['Hours recorded', hours(c.totals.hours)], ['Billable time value', money2(c.totals.billable_value)],
+      ['Expenses', money2(c.totals.expenses)], ['Unbilled (WIP)', h`<a href="#/cases/${c.id}/billing">${money2(c.totals.unbilled)}</a>`],
+      ['Invoiced / paid', `${money2(c.totals.invoiced)} / ${money2(c.totals.paid)}`],
       ...(cl ? [['Client contact', [cl.contact_person, cl.email, cl.phone].filter(Boolean).join(' · ')]] : []),
     ])}</div></div>
   </div>`;
@@ -628,6 +727,7 @@ async function caseSchedule(c, reload) {
     addEvent: () => editEvent({ case_id: c.id }, { after: reload }),
     editEvent: (el) => editEvent(events.find((e) => e.id === +el.dataset.id), { after: reload }),
     toggleEvent: async (el) => { await api('PUT', `/api/events/${el.dataset.id}`, { completed: el.checked }); reload(); },
+    outcome: (el) => recordOutcome(events.find((e) => e.id === +el.dataset.id), reload),
     delEvent: async (el) => {
       const e = events.find((x) => x.id === +el.dataset.id);
       if (await confirmDialog(h`Delete <b>${e.title}</b>?`)) { await api('DELETE', `/api/events/${e.id}`); toast('Event deleted'); reload(); }
@@ -639,8 +739,10 @@ async function caseSchedule(c, reload) {
   const row = (e) => h`<tr class="${e.completed ? 'done-row' : ''}">
     <td><input type="checkbox" data-change="toggleEvent" data-id="${e.id}" ${e.completed ? raw('checked') : ''} aria-label="Done"></td>
     <td class="nowrap">${fmtDateTime(e.starts_at)}<div class="small">${e.completed ? '' : dueLabel(e.starts_at.slice(0, 10))}</div></td>
-    <td>${kindBadge(e.kind)}</td><td><b class="title">${e.title}</b><div class="muted small pre">${e.notes}</div></td><td>${e.location}</td>
-    <td class="right nowrap"><button class="link" data-act="editEvent" data-id="${e.id}">Edit</button><button class="link danger" data-act="delEvent" data-id="${e.id}">Delete</button></td></tr>`;
+    <td>${kindBadge(e.kind)}</td><td><b class="title">${e.title}</b><div class="muted small pre">${e.notes}</div>
+      ${e.outcome ? h`<div class="outcome small"><b>Outcome:</b> ${e.outcome}</div>` : ''}</td><td>${e.location}</td>
+    <td class="right nowrap">${!e.completed && e.starts_at.slice(0, 10) <= t ? h`<button class="link" data-act="outcome" data-id="${e.id}"><b>Record outcome</b></button>` : ''}
+      <button class="link" data-act="editEvent" data-id="${e.id}">Edit</button><button class="link danger" data-act="delEvent" data-id="${e.id}">Delete</button></td></tr>`;
   const table = (list, empty) => (list.length ? h`<div class="table-wrap"><table><thead><tr><th></th><th>When</th><th>Type</th><th>Event</th><th>Location</th><th></th></tr></thead><tbody>${list.map(row)}</tbody></table></div>` : h`<div class="empty">${empty}</div>`);
   return h`<div class="card" style="margin-bottom:16px"><div class="card-head"><h2>Upcoming</h2><button class="primary" data-act="addEvent">+ Add hearing / deadline</button></div>
     <div class="card-body flush">${table(upcoming, 'No upcoming events.')}</div></div>
@@ -672,7 +774,8 @@ async function caseTasks(c, reload) {
   const tasks = await GET(`/api/tasks?case_id=${c.id}`);
   taskActs(tasks, reload);
   acts.addTask = () => editTask({ case_id: c.id }, { after: reload });
-  return h`<div class="card"><div class="card-head"><h2>Tasks</h2><button class="primary" data-act="addTask">+ Add task</button></div>
+  acts.applyChecklist = () => applyChecklist(c, reload);
+  return h`<div class="card"><div class="card-head"><h2>Tasks</h2><div class="actions"><button data-act="applyChecklist">Apply checklist</button><button class="primary" data-act="addTask">+ Add task</button></div></div>
     <div class="card-body flush">${taskTable(tasks)}</div></div>`;
 }
 
@@ -740,7 +843,7 @@ function timeTable(entries, { showCase = false } = {}) {
       ${showCase ? h`<td><a href="#/cases/${e.case_id}/time">${e.internal_ref} · ${e.case_title}</a></td>` : ''}
       <td class="nowrap">${e.user_name}</td><td class="pre">${e.description}${e.billable ? '' : h` <span class="badge">Non-billable</span>`}</td>
       <td class="right">${e.hours}</td><td class="right nowrap">${money2(e.rate)}</td><td class="right nowrap">${e.billable ? money2(e.hours * e.rate) : '—'}</td>
-      <td class="right nowrap"><button class="link" data-act="editTime" data-id="${e.id}">Edit</button><button class="link danger" data-act="delTime" data-id="${e.id}">Delete</button></td></tr>`)}
+      <td class="right nowrap">${e.invoice_id ? h`<span class="badge b-settled">Billed</span>` : h`<button class="link" data-act="editTime" data-id="${e.id}">Edit</button><button class="link danger" data-act="delTime" data-id="${e.id}">Delete</button>`}</td></tr>`)}
       <tr><td colspan="${showCase ? 4 : 3}"><b>Total</b></td><td class="right"><b>${Math.round(tot.h * 100) / 100}</b></td><td></td><td class="right nowrap"><b>${money2(tot.v)}</b></td><td></td></tr>
     </tbody></table></div>`;
 }
@@ -752,17 +855,176 @@ function timeActs(entries, reload, caseOpts) {
     },
   });
 }
-async function caseTime(c, reload) {
-  const entries = await GET(`/api/time?case_id=${c.id}`);
+function expenseTable(list, { showCase = false } = {}) {
+  if (!list.length) return h`<div class="empty">No expenses recorded.</div>`;
+  const tot = list.reduce((a, x) => a + x.amount, 0);
+  return h`<div class="table-wrap"><table><thead><tr><th>Date</th>${showCase ? h`<th>Matter</th>` : ''}<th>Category</th><th>Description</th><th>By</th><th class="right">Amount</th><th></th></tr></thead>
+    <tbody>${list.map((x) => h`<tr><td class="nowrap">${fmtDate(x.expense_date)}</td>
+      ${showCase ? h`<td><a href="#/cases/${x.case_id}/billing">${x.internal_ref} · ${x.case_title}</a></td>` : ''}
+      <td>${badge('', x.category)}</td><td class="pre">${x.description}${x.billable ? '' : h` <span class="badge">Non-billable</span>`}${x.invoice_number ? h` <span class="badge b-settled">Billed ${x.invoice_number}</span>` : ''}</td>
+      <td class="nowrap">${x.user_name}</td><td class="right nowrap">${money2(x.amount)}</td>
+      <td class="right nowrap">${x.invoice_id ? '' : h`<button class="link" data-act="editExpense" data-id="${x.id}">Edit</button><button class="link danger" data-act="delExpense" data-id="${x.id}">Delete</button>`}</td></tr>`)}
+      <tr><td colspan="${showCase ? 5 : 4}"><b>Total</b></td><td class="right nowrap"><b>${money2(tot)}</b></td><td></td></tr></tbody></table></div>`;
+}
+const expenseFields = (caseOpts) => [
+  ...(caseOpts ? [{ name: 'case_id', label: 'Matter', type: 'select', options: caseOpts, required: true, full: true, numeric: true }] : []),
+  { name: 'expense_date', label: 'Date', type: 'date', required: true },
+  { name: 'amount', label: 'Amount', type: 'number', step: '0.01', min: 0, required: true, numeric: true },
+  { name: 'category', label: 'Category', type: 'select', options: enumOpts('expense_category') },
+  { name: 'user_id', label: 'Paid by', type: 'select', options: userOpts(null), numeric: true },
+  { name: 'description', label: 'Description', type: 'textarea', full: true, rows: 2 },
+  { name: 'billable', label: 'Bill this to the client', type: 'checkbox', full: true },
+];
+function editExpense(x, { caseOpts, after }) {
+  openForm({
+    title: x?.id ? 'Edit expense' : 'Add expense',
+    fields: expenseFields(caseOpts),
+    values: x?.id ? x : { expense_date: todayStr(), billable: true, category: 'court_fees', user_id: state.me.id, ...x },
+    onSubmit: async (d) => {
+      const body = caseOpts ? d : { ...d, case_id: x.case_id };
+      if (x?.id) await api('PUT', `/api/expenses/${x.id}`, body); else await api('POST', '/api/expenses', body);
+      toast('Expense saved'); after();
+    },
+  });
+}
+function expenseActs(list, reload, caseOpts) {
+  Object.assign(acts, {
+    editExpense: (el) => editExpense(list.find((x) => x.id === +el.dataset.id), { caseOpts, after: reload }),
+    delExpense: async (el) => {
+      if (await confirmDialog('Delete this expense?')) { await api('DELETE', `/api/expenses/${el.dataset.id}`); toast('Expense deleted'); reload(); }
+    },
+  });
+}
+function invoiceTable(list, { showCase = true } = {}) {
+  if (!list.length) return h`<div class="empty">No invoices.</div>`;
+  return h`<div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Issued</th><th>Due</th>${showCase ? h`<th>Client / matter</th>` : ''}<th>Status</th><th class="right">Total</th><th class="right">Balance</th></tr></thead>
+    <tbody>${list.map((i) => h`<tr class="click" data-act="go" data-href="#/invoices/${i.id}"><td><b>${i.number}</b></td><td class="nowrap">${fmtDate(i.issue_date)}</td>
+      <td class="nowrap small">${i.status === 'sent' ? dueLabel(i.due_date) : fmtDate(i.due_date)}</td>
+      ${showCase ? h`<td>${i.client_name || '—'}<div class="muted small">${i.internal_ref} · ${i.case_title}</div></td>` : ''}
+      <td>${invoiceBadge(i)}</td><td class="right nowrap">${money2(i.total)}</td><td class="right nowrap">${i.status === 'void' ? '—' : money2(i.balance)}</td></tr>`)}</tbody></table></div>`;
+}
+const invoiceBadge = (i) => (i.overdue ? badge('p-urgent', 'overdue') : badge({ draft: 'b-closed', sent: 'b-active', paid: 'b-settled', void: 'p-low' }[i.status], i.status));
+
+async function newInvoice(caseId, after) {
+  const caseOpts = caseId ? null : await caseOptions();
+  const fields = [
+    ...(caseOpts ? [{ name: 'case_id', label: 'Matter', type: 'select', options: caseOpts, required: true, full: true, numeric: true }] : []),
+    { name: 'issue_date', label: 'Invoice date', type: 'date', required: true },
+    { name: 'due_date', label: 'Due date', type: 'date', help: `Blank = ${state.settings.payment_terms || 0} days after invoice date` },
+    { name: 'up_to', label: 'Include work up to', type: 'date', help: 'Blank = all unbilled work' },
+    { name: 'tax_rate', label: 'Tax / VAT rate (%)', type: 'number', step: '0.01', numeric: true },
+    { name: 'discount', label: 'Discount (amount)', type: 'number', step: '0.01', numeric: true },
+    { name: 'notes', label: 'Notes shown on invoice', type: 'textarea', full: true, rows: 2, placeholder: 'e.g. Payment instructions, bank details' },
+  ];
+  let preview = '';
+  if (caseId) {
+    const u = await GET(`/api/cases/${caseId}/unbilled`);
+    preview = `<div class="muted" style="margin-bottom:6px">Unbilled on this matter: <b>${escHtml(money2(u.total))}</b> (${u.time_count} time entr${u.time_count === 1 ? 'y' : 'ies'}, ${u.expense_count} expense${u.expense_count === 1 ? '' : 's'}).</div>`;
+  }
+  openForm({
+    title: 'Create invoice',
+    fields,
+    values: { issue_date: todayStr(), tax_rate: state.settings.tax_rate },
+    submitLabel: 'Create invoice',
+    extraButtons: '',
+    onSubmit: async (d) => {
+      const r = await api('POST', '/api/invoices', { ...d, case_id: caseId || d.case_id });
+      toast('Invoice created as draft'); after(r.id);
+    },
+  });
+  if (preview) $('.modal-body').insertAdjacentHTML('afterbegin', preview);
+}
+
+async function caseBilling(c, reload) {
+  const [entries, expenses, invoices] = await Promise.all([GET(`/api/time?case_id=${c.id}`), GET(`/api/expenses?case_id=${c.id}`), GET(`/api/invoices?case_id=${c.id}`)]);
   timeActs(entries, reload);
+  expenseActs(expenses, reload);
   acts.addTime = () => editTime({ case_id: c.id }, { after: reload });
+  acts.addExpense = () => editExpense({ case_id: c.id }, { after: reload });
+  acts.newInvoice = () => newInvoice(c.id, (id) => { location.hash = `#/invoices/${id}`; });
   return h`<div class="stats">
       <div class="card stat"><div class="label">Hours recorded</div><div class="value">${hours(c.totals.hours)}</div></div>
-      <div class="card stat"><div class="label">Billable value</div><div class="value">${money2(c.totals.billable_value)}</div></div>
+      <div class="card stat"><div class="label">Unbilled (WIP)</div><div class="value">${money2(c.totals.unbilled)}</div></div>
+      <div class="card stat"><div class="label">Invoiced</div><div class="value">${money2(c.totals.invoiced)}</div></div>
+      <div class="card stat"><div class="label">Received</div><div class="value">${money2(c.totals.paid)}</div></div>
       <div class="card stat"><div class="label">Fee arrangement</div><div class="value" style="font-size:18px">${c.fee_arrangement || '—'}</div></div>
     </div>
-    <div class="card"><div class="card-head"><h2>Time entries</h2><button class="primary" data-act="addTime">+ Log time</button></div>
-    <div class="card-body flush">${timeTable(entries)}</div></div>`;
+    <div class="card" style="margin-bottom:16px"><div class="card-head"><h2>Invoices</h2>${canBill() ? h`<button class="primary" data-act="newInvoice">+ Create invoice</button>` : ''}</div>
+      <div class="card-body flush">${invoiceTable(invoices, { showCase: false })}</div></div>
+    <div class="card" style="margin-bottom:16px"><div class="card-head"><h2>Time entries</h2><button data-act="addTime">+ Log time</button></div>
+      <div class="card-body flush">${timeTable(entries)}</div></div>
+    <div class="card"><div class="card-head"><h2>Expenses</h2><button data-act="addExpense">+ Add expense</button></div>
+      <div class="card-body flush">${expenseTable(expenses)}</div></div>`;
+}
+
+async function caseContacts(c, reload) {
+  const list = await GET(`/api/contacts?case_id=${c.id}`);
+  const fields = [
+    { name: 'name', label: 'Name', required: true },
+    { name: 'role', label: 'Role', type: 'select', options: enumOpts('contact_role') },
+    { name: 'organization', label: 'Organisation' },
+    { name: 'email', label: 'Email', type: 'email' },
+    { name: 'phone', label: 'Phone' },
+    { name: 'notes', label: 'Notes', type: 'textarea', full: true, rows: 3 },
+  ];
+  const edit = (x) => openForm({
+    title: x ? 'Edit contact' : 'Add contact', fields, values: x || { role: 'witness' },
+    onSubmit: async (d) => {
+      if (x) await api('PUT', `/api/contacts/${x.id}`, d); else await api('POST', '/api/contacts', { ...d, case_id: c.id });
+      toast('Contact saved'); reload();
+    },
+  });
+  Object.assign(acts, {
+    addContact: () => edit(null),
+    editContact: (el) => edit(list.find((x) => x.id === +el.dataset.id)),
+    delContact: async (el) => {
+      const x = list.find((y) => y.id === +el.dataset.id);
+      if (await confirmDialog(h`Remove <b>${x.name}</b> from this matter?`)) { await api('DELETE', `/api/contacts/${x.id}`); toast('Contact removed'); reload(); }
+    },
+  });
+  return h`<div class="card"><div class="card-head"><h2>People involved</h2><button class="primary" data-act="addContact">+ Add contact</button></div>
+    <div class="card-body flush">${list.length ? h`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th>Organisation</th><th>Contact</th><th>Notes</th><th></th></tr></thead>
+      <tbody>${list.map((x) => h`<tr><td><b>${x.name}</b></td><td>${badge('', x.role)}</td><td>${x.organization}</td>
+        <td class="small">${x.email ? h`<a href="mailto:${x.email}">${x.email}</a>` : ''}${x.email && x.phone ? h`<br>` : ''}${x.phone}</td><td class="small pre">${x.notes}</td>
+        <td class="right nowrap"><button class="link" data-act="editContact" data-id="${x.id}">Edit</button><button class="link danger" data-act="delContact" data-id="${x.id}">Delete</button></td></tr>`)}</tbody></table></div>`
+      : h`<div class="empty">Add witnesses, experts, opposing counsel, court clerks, insurers and other people involved in this matter.</div>`}</div></div>`;
+}
+
+function recordOutcome(ev, after) {
+  openForm({
+    title: `Record outcome — ${ev.title}`,
+    fields: [
+      { name: 'outcome', label: 'What happened?', type: 'textarea', required: true, full: true, rows: 3, placeholder: 'e.g. Adjourned at request of defendant; court ordered disclosure within 14 days' },
+      { name: 'next_at', label: 'Next hearing / date (optional)', type: 'datetime' },
+      { name: 'next_kind', label: 'Next event type', type: 'select', options: enumOpts('event_kind') },
+      { name: 'next_title', label: 'Next event title', full: true, placeholder: ev.title },
+    ],
+    values: { next_kind: ev.kind },
+    submitLabel: 'Save outcome',
+    onSubmit: async (d) => {
+      const r = await api('POST', `/api/events/${ev.id}/outcome`, d);
+      toast(r.next_id ? 'Outcome saved and next date scheduled' : 'Outcome saved'); after();
+    },
+  });
+}
+
+async function applyChecklist(c, after) {
+  const templates = await GET('/api/templates');
+  if (!templates.length) { toast('No checklists yet. An admin can create them in Settings.', true); return; }
+  openForm({
+    title: 'Apply a task checklist',
+    fields: [
+      { name: 'template_id', label: 'Checklist', type: 'select', options: templates.map((t) => [t.id, `${t.name} (${t.items.length} tasks)`]), required: true, full: true, numeric: true },
+      { name: 'start_date', label: 'Count due dates from', type: 'date', required: true },
+      { name: 'assignee_id', label: 'Assign tasks to', type: 'select', options: userOpts('Lead attorney'), numeric: true },
+    ],
+    values: { start_date: todayStr() },
+    submitLabel: 'Create tasks',
+    onSubmit: async (d) => {
+      const r = await api('POST', `/api/cases/${c.id}/apply-template`, d);
+      toast(`${r.created} tasks created`); after();
+    },
+  });
 }
 
 async function caseActivity(c) {
@@ -880,19 +1142,22 @@ async function viewClient(id) {
 const timeFilter = { user_id: '', from: '', to: '' };
 async function viewTime() {
   if (!timeFilter.from) { const d = new Date(); timeFilter.from = isoDate(new Date(d.getFullYear(), d.getMonth(), 1)); }
-  const entries = await GET(`/api/time${qs(timeFilter)}`);
-  const caseOpts = await caseOptions();
+  const [entries, expenses, caseOpts] = await Promise.all([GET(`/api/time${qs(timeFilter)}`), GET(`/api/expenses${qs({ from: timeFilter.from, to: timeFilter.to })}`), caseOptions()]);
   timeActs(entries, rerender, caseOpts);
+  expenseActs(expenses, rerender, caseOpts);
   acts.addTime = () => editTime({}, { caseOpts, after: rerender });
+  acts.addExpense = () => editExpense({}, { caseOpts, after: rerender });
   acts.filter = (el) => { timeFilter[el.name] = el.value; rerender(); };
   setView(h`
-    <div class="page-head"><div><h1>Time</h1><div class="muted sub">Time entries across all matters</div></div><button class="primary" data-act="addTime">+ Log time</button></div>
+    <div class="page-head"><div><h1>Time & expenses</h1><div class="muted sub">Work and costs across all matters. Tip: use ⏱ Start timer at the top of the page.</div></div>
+      <div class="actions"><button data-act="addExpense">+ Add expense</button><button class="primary" data-act="addTime">+ Log time</button></div></div>
     <div class="toolbar">
       <select name="user_id" data-change="filter">${[['', 'All timekeepers'], ...state.users.map((u) => [u.id, u.name])].map(([v, l]) => h`<option value="${v}"${String(timeFilter.user_id) === String(v) ? raw(' selected') : ''}>${l}</option>`)}</select>
       <label class="small" style="margin:0">From</label><input type="date" name="from" value="${timeFilter.from}" data-change="filter">
       <label class="small" style="margin:0">To</label><input type="date" name="to" value="${timeFilter.to}" data-change="filter">
     </div>
-    <div class="card">${timeTable(entries, { showCase: true })}</div>`);
+    <div class="card" style="margin-bottom:16px"><div class="card-head"><h2>Time entries</h2></div>${timeTable(entries, { showCase: true })}</div>
+    <div class="card"><div class="card-head"><h2>Expenses</h2></div>${expenseTable(expenses, { showCase: true })}</div>`);
 }
 
 // ------------------------------------------------------------------ conflict check
@@ -902,13 +1167,13 @@ async function viewConflicts() {
     const out = $('#conflict-results');
     try {
       const r = await GET(`/api/conflicts${qs({ q })}`);
-      const total = r.clients.length + r.opposing.length + r.cases.length;
+      const total = r.clients.length + r.opposing.length + r.cases.length + r.contacts.length;
       out.innerHTML = val(h`
         <div class="card" style="margin-bottom:16px;border-color:${total ? '#fec84b' : '#a6f4c5'}"><div class="card-body">
           ${total ? h`<b class="soon">⚠ ${total} potential match${total > 1 ? 'es' : ''} for “${q}”.</b> Review each before accepting the engagement.`
-            : h`<b style="color:var(--ok)">✓ No matches for “${q}”.</b> <span class="muted">Searched clients, opposing parties, opposing counsel and matter titles.</span>`}
+            : h`<b style="color:var(--ok)">✓ No matches for “${q}”.</b> <span class="muted">Searched clients, opposing parties, opposing counsel, matter titles and people on matters.</span>`}
         </div></div>
-        <div class="grid cols-3">
+        <div class="grid cols-2">
           <div class="card"><div class="card-head"><h2>Existing clients</h2><span class="badge">${r.clients.length}</span></div><div class="card-body flush">
             ${listOrEmpty(r.clients, (c) => h`<li><a href="#/clients/${c.id}">${c.name}</a><span class="muted small">${label(c.type)}</span></li>`, 'None')}</div></div>
           <div class="card"><div class="card-head"><h2>Adverse parties / counsel</h2><span class="badge">${r.opposing.length}</span></div><div class="card-body flush">
@@ -916,6 +1181,8 @@ async function viewConflicts() {
               <div class="muted small">Opposing: ${c.opposing_party || '—'}${c.opposing_counsel ? ` · Counsel: ${c.opposing_counsel}` : ''}<br>Our client: ${c.client_name || '—'}</div></div>${statusBadge(c.status)}</li>`, 'None')}</div></div>
           <div class="card"><div class="card-head"><h2>Matter titles</h2><span class="badge">${r.cases.length}</span></div><div class="card-body flush">
             ${listOrEmpty(r.cases, (c) => h`<li><div class="grow"><a href="#/cases/${c.id}">${c.internal_ref} · ${c.title}</a></div>${statusBadge(c.status)}</li>`, 'None')}</div></div>
+          <div class="card"><div class="card-head"><h2>People on matters (witnesses, experts…)</h2><span class="badge">${r.contacts.length}</span></div><div class="card-body flush">
+            ${listOrEmpty(r.contacts, (c) => h`<li><div class="grow"><b>${c.name}</b> ${badge('', c.role)}<div class="muted small">${c.organization || ''} · <a href="#/cases/${c.case_id}/contacts">${c.internal_ref} · ${c.case_title}</a></div></div></li>`, 'None')}</div></div>
         </div>`);
     } catch (err) { out.innerHTML = val(h`<div class="error">${err.message}</div>`); }
   };
@@ -943,6 +1210,12 @@ async function viewReports() {
       <label class="small" style="margin:0">From</label><input type="date" name="from" value="${reportFilter.from}" data-change="filter">
       <label class="small" style="margin:0">To</label><input type="date" name="to" value="${reportFilter.to}" data-change="filter">
       <span class="muted small">(blank = all time)</span></div>
+    <div class="stats">
+      <div class="card stat"><div class="label">Invoiced in period</div><div class="value">${money2(r.invoiced)}</div></div>
+      <div class="card stat"><div class="label">Collected in period</div><div class="value">${money2(r.collected)}</div></div>
+      <div class="card stat"><div class="label">Expenses in period</div><div class="value">${money2(r.expenses)}</div></div>
+      <div class="card stat"><div class="label">Hours in period</div><div class="value">${hours(tot.h)}</div></div>
+    </div>
     <div class="grid cols-2">
       <div class="card"><div class="card-head"><h2>Time by timekeeper</h2></div><div class="card-body flush">${r.time_by_user.length ? h`<div class="table-wrap"><table>
         <thead><tr><th>Timekeeper</th><th class="right">Hours</th><th class="right">Billable h</th><th class="right">Value</th></tr></thead>
@@ -979,6 +1252,16 @@ async function viewUsers() {
 
 // ------------------------------------------------------------------ account
 async function viewAccount() {
+  const feed = await GET('/api/me/calendar-feed');
+  acts.copyFeed = async () => {
+    const inp = $('#feed-url');
+    try { await navigator.clipboard.writeText(inp.value); toast('Link copied'); } catch { inp.select(); toast('Press Ctrl+C to copy'); }
+  };
+  acts.resetFeed = async () => {
+    if (await confirmDialog('Create a new private link? The old link will stop working in any calendar app that uses it.', 'Reset link')) {
+      await api('POST', '/api/me/calendar-feed/reset'); toast('New link created'); rerender();
+    }
+  };
   acts.changePw = async (form) => {
     if (form.next.value !== form.confirm.value) { toast('New passwords do not match', true); return; }
     await api('PUT', '/api/me/password', { current: form.current.value, next: form.next.value });
@@ -992,7 +1275,295 @@ async function viewAccount() {
         <div class="field"><label>New password</label><input type="password" name="next" required minlength="8" autocomplete="new-password"></div>
         <div class="field"><label>Confirm new password</label><input type="password" name="confirm" required minlength="8" autocomplete="new-password"></div>
         <button class="primary" type="submit">Update password</button>
-      </form></div></div>`);
+      </form></div></div>
+    <div class="card" style="max-width:640px;margin-top:16px"><div class="card-head"><h2>Sync to Outlook / Google / Apple Calendar</h2></div><div class="card-body">
+      <p style="margin-top:0">Subscribe to this private link in your calendar app to see all hearings and deadlines on your phone. Keep it secret — anyone with the link can see the calendar.</p>
+      <div class="toolbar"><input id="feed-url" readonly value="${location.origin}${feed.path}" style="flex:1"><button data-act="copyFeed">Copy</button></div>
+      <div class="actions"><a class="btn" href="/api/calendar.ics">Download .ics file</a><button data-act="resetFeed">Reset link</button></div>
+      <p class="muted small">Google Calendar: Other calendars → + → From URL. Outlook: Add calendar → Subscribe from web. The link only works while this app is reachable from that device (e.g. hosted on a server).</p>
+    </div></div>`);
+}
+
+// ------------------------------------------------------------------ case board (kanban)
+async function viewBoard() {
+  const cases = await GET('/api/cases');
+  const cols = state.enums.case_status;
+  acts.boardNew = () => editCase(null, (id) => { location.hash = `#/cases/${id}`; });
+  setView(h`
+    <div class="page-head"><div><h1>Case board</h1><div class="muted sub">Drag a card to another column to change the matter's status</div></div>
+      <button class="primary" data-act="boardNew">+ New matter</button></div>
+    <div class="board">${cols.map((st) => {
+      const list = cases.filter((c) => c.status === st);
+      return h`<div class="board-col" data-status="${st}"><div class="board-col-head">${statusBadge(st)} <span class="muted small">${list.length}</span></div>
+        <div class="board-cards">${list.map((c) => h`<div class="board-card" draggable="true" data-id="${c.id}" data-act="go" data-href="#/cases/${c.id}">
+          <div class="small muted">${c.internal_ref}${c.priority !== 'normal' ? h` ${prioBadge(c.priority)}` : ''}</div>
+          <div><b>${c.title}</b></div>
+          <div class="small muted">${c.client_name || ''}${c.lead_attorney_name ? ` · ${c.lead_attorney_name}` : ''}</div>
+          ${c.next_event ? h`<div class="small">Next: ${dueLabel(c.next_event.slice(0, 10))}</div>` : ''}
+        </div>`)}</div></div>`;
+    })}</div>`);
+  const board = $('.board');
+  let dragId = null;
+  board.addEventListener('dragstart', (e) => { const card = e.target.closest('.board-card'); if (card) { dragId = card.dataset.id; card.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; } });
+  board.addEventListener('dragend', (e) => { e.target.closest('.board-card')?.classList.remove('dragging'); $$('.board-col.over').forEach((x) => x.classList.remove('over')); });
+  board.addEventListener('dragover', (e) => { const col = e.target.closest('.board-col'); if (col) { e.preventDefault(); $$('.board-col.over').forEach((x) => x !== col && x.classList.remove('over')); col.classList.add('over'); } });
+  board.addEventListener('drop', async (e) => {
+    const col = e.target.closest('.board-col');
+    if (!col || !dragId) return;
+    e.preventDefault();
+    const c = cases.find((x) => x.id === +dragId);
+    if (c && c.status !== col.dataset.status) {
+      try { await api('PUT', `/api/cases/${c.id}`, { status: col.dataset.status }); toast(`${c.title} → ${label(col.dataset.status)}`); } catch (err) { toast(err.message, true); }
+      rerender();
+    }
+  });
+}
+
+// ------------------------------------------------------------------ billing
+const billingFilter = { status: 'unpaid' };
+async function viewBilling() {
+  const [list, dash] = await Promise.all([GET(`/api/invoices${qs(billingFilter)}`), GET('/api/dashboard')]);
+  acts.filter = (el) => { billingFilter[el.name] = el.value; rerender(); };
+  acts.newInvoice = () => newInvoice(null, (id) => { location.hash = `#/invoices/${id}`; });
+  const overdue = list.filter((i) => i.overdue);
+  setView(h`
+    <div class="page-head"><div><h1>Billing</h1><div class="muted sub">Invoices, payments and unbilled work</div></div>
+      ${canBill() ? h`<button class="primary" data-act="newInvoice">+ Create invoice</button>` : ''}</div>
+    <div class="stats">
+      <div class="card stat"><div class="label">Unbilled work (WIP)</div><div class="value">${money2(dash.counts.unbilled)}</div></div>
+      <div class="card stat"><div class="label">Outstanding (sent)</div><div class="value">${money2(dash.counts.outstanding)}</div></div>
+      <div class="card stat ${overdue.length ? 'alert' : ''}"><div class="label">Overdue invoices (shown)</div><div class="value">${overdue.length}</div></div>
+    </div>
+    <div class="toolbar"><select name="status" data-change="filter">${[['unpaid', 'Unpaid (draft + sent)'], ['overdue', 'Overdue'], ['draft', 'Draft'], ['sent', 'Sent'], ['paid', 'Paid'], ['void', 'Void'], ['', 'All invoices']]
+      .map(([v, l]) => h`<option value="${v}"${billingFilter.status === v ? raw(' selected') : ''}>${l}</option>`)}</select>
+      <span class="muted small">Invoices are created from a matter's unbilled time and expenses.</span></div>
+    <div class="card">${invoiceTable(list)}</div>`);
+}
+
+async function viewInvoice(id) {
+  const i = await GET(`/api/invoices/${id}`);
+  const f = i.firm;
+  const reload = () => rerender();
+  Object.assign(acts, {
+    print: () => window.print(),
+    markSent: async () => { await api('PUT', `/api/invoices/${id}`, { status: 'sent' }); toast('Marked as sent'); reload(); },
+    voidInv: async () => {
+      if (!(await confirmDialog(h`Void invoice <b>${i.number}</b>? Its time and expenses become unbilled again.`, 'Void invoice'))) return;
+      await api('PUT', `/api/invoices/${id}`, { status: 'void' }); toast('Invoice voided'); reload();
+    },
+    delInv: async () => {
+      if (!(await confirmDialog(h`Delete invoice <b>${i.number}</b>? Its time and expenses become unbilled again.`))) return;
+      await api('DELETE', `/api/invoices/${id}`); toast('Invoice deleted'); location.hash = `#/cases/${i.case_id}/billing`;
+    },
+    editInv: () => openForm({
+      title: `Edit ${i.number}`, fields: [{ name: 'due_date', label: 'Due date', type: 'date' }, { name: 'notes', label: 'Notes shown on invoice', type: 'textarea', full: true }],
+      values: i, onSubmit: async (d) => { await api('PUT', `/api/invoices/${id}`, d); toast('Invoice updated'); reload(); },
+    }),
+    addPayment: () => openForm({
+      title: `Record payment — ${i.number}`, size: 'sm',
+      fields: [
+        { name: 'payment_date', label: 'Date received', type: 'date', required: true, full: true },
+        { name: 'amount', label: 'Amount', type: 'number', step: '0.01', required: true, numeric: true, full: true },
+        { name: 'method', label: 'Method', type: 'select', options: enumOpts('payment_method'), full: true },
+        { name: 'reference', label: 'Reference', full: true, placeholder: 'Cheque no., transfer ref…' },
+      ],
+      values: { payment_date: todayStr(), amount: i.balance, method: 'bank_transfer' },
+      onSubmit: async (d) => { await api('POST', `/api/invoices/${id}/payments`, d); toast('Payment recorded'); reload(); },
+    }),
+    delPayment: async (el) => {
+      if (await confirmDialog('Delete this payment?')) { await api('DELETE', `/api/payments/${el.dataset.id}`); toast('Payment deleted'); reload(); }
+    },
+  });
+  const cl = i.client;
+  setView(h`
+    <div style="margin-bottom:6px" class="small"><a href="#/billing">← Billing</a> · <a href="#/cases/${i.case_id}/billing">Matter billing</a></div>
+    <div class="page-head"><div><h1>Invoice ${i.number}</h1><div class="muted sub">${invoiceBadge(i)} &nbsp; Balance due: <b>${money2(i.status === 'void' ? 0 : i.balance)}</b></div></div>
+      <div class="actions">
+        <button data-act="print">Print / Save as PDF</button>
+        ${canBill() && i.status === 'draft' ? h`<button data-act="editInv">Edit</button><button data-act="markSent">Mark as sent</button>` : ''}
+        ${canBill() && ['draft', 'sent'].includes(i.status) ? h`<button class="primary" data-act="addPayment">Record payment</button>` : ''}
+        ${canBill() && i.status !== 'void' ? h`<button class="danger" data-act="voidInv">Void</button>` : ''}
+        ${canBill() && ['draft', 'void'].includes(i.status) ? h`<button class="danger" data-act="delInv">Delete</button>` : ''}
+      </div></div>
+    <div class="card invoice"><div class="card-body">
+      <div class="inv-head">
+        <div><div class="inv-firm">${f.firm_name}</div><div class="muted pre">${f.firm_address}</div><div class="muted">${[f.firm_email, f.firm_phone].filter(Boolean).join(' · ')}</div></div>
+        <div class="right"><div class="inv-title">INVOICE ${i.status === 'void' ? '(VOID)' : ''}</div>
+          <div>No. <b>${i.number}</b></div><div>Date: ${fmtDate(i.issue_date)}</div><div>Due: ${fmtDate(i.due_date)}</div></div>
+      </div>
+      <div class="inv-parties">
+        <div><div class="muted small">BILL TO</div><b>${cl?.name || '—'}</b>${cl?.contact_person ? h`<div>Attn: ${cl.contact_person}</div>` : ''}<div class="pre">${cl?.address || ''}</div><div>${cl?.email || ''}</div></div>
+        <div><div class="muted small">MATTER</div><b>${i.case_title}</b><div>${i.internal_ref}${i.case_number ? ` · ${i.case_number}` : ''}</div></div>
+      </div>
+      ${i.time.length ? h`<h3 class="inv-sec">Professional services</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Timekeeper</th><th>Description</th><th class="right">Hours</th><th class="right">Rate</th><th class="right">Amount</th></tr></thead>
+        <tbody>${i.time.map((t) => h`<tr><td class="nowrap">${fmtDate(t.work_date)}</td><td class="nowrap">${t.user_name}</td><td class="pre">${t.description}</td><td class="right">${t.hours}</td><td class="right nowrap">${money2(t.rate)}</td><td class="right nowrap">${money2(t.amount)}</td></tr>`)}</tbody></table></div>` : ''}
+      ${i.expenses.length ? h`<h3 class="inv-sec">Expenses & disbursements</h3><div class="table-wrap"><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th class="right">Amount</th></tr></thead>
+        <tbody>${i.expenses.map((x) => h`<tr><td class="nowrap">${fmtDate(x.expense_date)}</td><td>${label(x.category)}</td><td class="pre">${x.description}</td><td class="right nowrap">${money2(x.amount)}</td></tr>`)}</tbody></table></div>` : ''}
+      <table class="inv-totals"><tbody>
+        <tr><td>Professional fees</td><td class="right">${money2(i.time_total)}</td></tr>
+        <tr><td>Expenses</td><td class="right">${money2(i.expense_total)}</td></tr>
+        ${i.discount ? h`<tr><td>Discount</td><td class="right">− ${money2(i.discount)}</td></tr>` : ''}
+        ${i.tax_rate ? h`<tr><td>Tax / VAT (${i.tax_rate}%)</td><td class="right">${money2(i.tax)}</td></tr>` : ''}
+        <tr class="grand"><td>Total</td><td class="right">${money2(i.total)}</td></tr>
+        <tr><td>Paid</td><td class="right">${money2(i.paid)}</td></tr>
+        <tr class="grand"><td>Balance due</td><td class="right">${money2(i.status === 'void' ? 0 : i.balance)}</td></tr>
+      </tbody></table>
+      ${i.notes ? h`<div class="inv-notes pre">${i.notes}</div>` : ''}
+    </div></div>
+    <div class="card no-print" style="margin-top:16px"><div class="card-head"><h2>Payments</h2></div><div class="card-body flush">
+      ${listOrEmpty(i.payments, (p) => h`<li><div class="grow"><b>${money2(p.amount)}</b> · ${label(p.method)}${p.reference ? ` · ${p.reference}` : ''}
+        <div class="muted small">${fmtDate(p.payment_date)} · recorded by ${p.user_name || '—'}</div></div>
+        ${canBill() ? h`<button class="link danger" data-act="delPayment" data-id="${p.id}">Delete</button>` : ''}</li>`, 'No payments recorded.')}</div></div>`);
+}
+
+// ------------------------------------------------------------------ deadline calculator
+function holidaySet() { return new Set(String(state.settings.holidays || '').split(/\s+/).filter(Boolean)); }
+function calcDeadline(start, n, mode, dir, roll) {
+  const hol = holidaySet();
+  const isOff = (d) => d.getDay() === 0 || d.getDay() === 6 || hol.has(isoDate(d));
+  const d = parseLocal(start);
+  const step = dir === 'before' ? -1 : 1;
+  const skipped = [];
+  if (mode === 'court') {
+    let left = n;
+    while (left > 0) { d.setDate(d.getDate() + step); if (isOff(d)) skipped.push(isoDate(d)); else left--; }
+  } else d.setDate(d.getDate() + step * n);
+  let rolled = null;
+  if (roll && isOff(d)) {
+    const orig = isoDate(d);
+    while (isOff(d)) d.setDate(d.getDate() + step);
+    rolled = orig;
+  }
+  return { date: isoDate(d), skipped, rolled };
+}
+async function viewDeadlines() {
+  acts.calc = (form) => {
+    const start = form.start.value; const n = Number(form.days.value);
+    if (!start || !Number.isInteger(n) || n < 0) { toast('Enter a trigger date and a whole number of days', true); return; }
+    const r = calcDeadline(start, n, form.mode.value, form.dir.value, form.roll.checked);
+    const d = parseLocal(r.date);
+    $('#calc-result').innerHTML = val(h`<div class="card"><div class="card-body">
+      <div class="muted small">DEADLINE</div>
+      <div class="calc-date">${d.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
+      <div class="muted">${n} ${form.mode.value === 'court' ? 'court (business) days' : 'calendar days'} ${form.dir.value} ${fmtDate(start)}.
+        ${r.skipped.length ? `Skipped ${r.skipped.length} weekend/holiday day${r.skipped.length > 1 ? 's' : ''}. ` : ''}
+        ${r.rolled ? `${fmtDate(r.rolled)} is a weekend or holiday, so the deadline moved to the next ${form.dir.value === 'before' ? 'earlier' : ''} working day.` : ''}</div>
+      <div class="actions" style="margin-top:12px"><button class="primary" data-act="calcAdd" data-date="${r.date}">Add this deadline to a matter</button></div>
+    </div></div>`);
+  };
+  acts.calcAdd = async (el) => editEvent({ kind: 'deadline', starts_at: `${el.dataset.date}T17:00`, title: $('#calc-title').value || '' }, { caseOpts: await caseOptions(), after: () => toast('Deadline added to the calendar') });
+  const hol = holidaySet().size;
+  setView(h`
+    <div class="page-head"><div><h1>Deadline calculator</h1><div class="muted sub">Work out a court deadline from a trigger date (service, filing, judgment…)</div></div></div>
+    <div class="grid cols-2">
+      <div class="card"><div class="card-body"><form data-submit="calc">
+        <div class="field"><label for="calc-title">What is the deadline? (optional)</label><input id="calc-title" placeholder="e.g. Defence due after service of claim"></div>
+        <div class="form-grid">
+          <div class="field"><label>Trigger date *</label><input type="date" name="start" value="${todayStr()}" required></div>
+          <div class="field"><label>Number of days *</label><input type="number" name="days" min="0" step="1" value="14" required></div>
+          <div class="field"><label>Count</label><select name="mode"><option value="calendar">Calendar days</option><option value="court">Court (business) days — skip weekends & holidays</option></select></div>
+          <div class="field"><label>Direction</label><select name="dir"><option value="after">After the trigger date</option><option value="before">Before the trigger date</option></select></div>
+        </div>
+        <div class="field"><label class="check-list"><span><input type="checkbox" name="roll" checked> If the deadline falls on a weekend or holiday, move it to the next working day</span></label></div>
+        <button class="primary" type="submit">Calculate</button>
+        <div class="muted small" style="margin-top:10px">${hol} court holiday${hol === 1 ? '' : 's'} configured${state.me.role === 'admin' ? h` — <a href="#/settings">edit in Settings</a>` : ''}. Weekends are Saturday and Sunday. Always verify against the applicable court rules.</div>
+      </form></div></div>
+      <div id="calc-result"></div>
+    </div>`);
+}
+
+// ------------------------------------------------------------------ global search
+async function viewSearch(q) {
+  const box = $('.search-box input'); if (box) box.value = q;
+  if (q.length < 2) { setView(h`<div class="card"><div class="empty">Type at least 2 characters in the search box above.</div></div>`); return; }
+  const r = await GET(`/api/search${qs({ q })}`);
+  const total = Object.values(r).reduce((a, x) => a + x.length, 0);
+  const section = (title, items, fn) => (items.length ? h`<div class="card" style="margin-bottom:16px"><div class="card-head"><h2>${title}</h2><span class="badge">${items.length}</span></div>
+    <div class="card-body flush"><ul class="list">${items.map(fn)}</ul></div></div>` : '');
+  const snippet = (text) => {
+    const i = text.toLowerCase().indexOf(q.toLowerCase());
+    const s0 = Math.max(0, i - 60);
+    return `${s0 > 0 ? '…' : ''}${text.slice(s0, i + q.length + 100)}${i + q.length + 100 < text.length ? '…' : ''}`;
+  };
+  setView(h`
+    <div class="page-head"><div><h1>Search results</h1><div class="muted sub">${total} result${total === 1 ? '' : 's'} for “${q}”</div></div></div>
+    ${total ? '' : h`<div class="card"><div class="empty">Nothing found. Try a different word.</div></div>`}
+    ${section('Cases', r.cases, (c) => h`<li><div class="grow"><a href="#/cases/${c.id}"><b>${c.internal_ref}</b> · ${c.title}</a><div class="muted small">${c.case_number} ${c.client_name || ''}</div></div>${statusBadge(c.status)}</li>`)}
+    ${section('Clients', r.clients, (c) => h`<li><div class="grow"><a href="#/clients/${c.id}">${c.name}</a><div class="muted small">${[c.email, c.phone].filter(Boolean).join(' · ')}</div></div></li>`)}
+    ${section('Contacts', r.contacts, (c) => h`<li><div class="grow"><b>${c.name}</b> ${badge('', c.role)}<div class="muted small">${c.organization || ''} · <a href="#/cases/${c.case_id}/contacts">${c.case_title}</a></div></div></li>`)}
+    ${section('Hearings & deadlines', r.events, (e) => h`<li><div class="grow">${kindBadge(e.kind)} <a href="#/cases/${e.case_id}/schedule">${e.title}</a><div class="muted small">${fmtDateTime(e.starts_at)} · ${e.case_title}</div></div></li>`)}
+    ${section('Tasks', r.tasks, (t) => h`<li><div class="grow"><a href="${t.case_id ? `#/cases/${t.case_id}/tasks` : '#/tasks'}">${t.title}</a><div class="muted small">${label(t.status)} · ${t.case_title || 'General'}</div></div><div class="small">${dueLabel(t.due_date, t.status === 'done')}</div></li>`)}
+    ${section('Documents', r.documents, (d) => h`<li><div class="grow"><a href="/api/documents/${d.id}/download">${d.name}</a><div class="muted small">${label(d.category)} · <a href="#/cases/${d.case_id}/documents">${d.case_title}</a></div></div></li>`)}
+    ${section('Notes', r.notes, (n) => h`<li><div class="grow"><a href="#/cases/${n.case_id}/notes">${n.case_title}</a><div class="small">${snippet(n.body)}</div><div class="muted small">${fmtStamp(n.created_at)}</div></div></li>`)}
+    ${section('Invoices', r.invoices, (i) => h`<li><div class="grow"><a href="#/invoices/${i.id}">${i.number}</a><div class="muted small">${i.case_title}</div></div>${badge('', i.status)} <span class="small">${money2(i.total)}</span></li>`)}`);
+}
+
+// ------------------------------------------------------------------ settings (admin)
+async function viewSettings() {
+  const [st, templates] = await Promise.all([GET('/api/settings'), GET('/api/templates')]);
+  const parseItems = (text) => text.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+    const [title, days, priority] = l.split('|').map((x) => (x || '').trim());
+    return { title, days: Number(days) || 0, priority: priority || 'normal' };
+  });
+  const itemsText = (t) => t.items.map((it) => `${it.title} | ${it.days} | ${it.priority}`).join('\n');
+  const tplForm = (t) => openForm({
+    title: t ? 'Edit checklist' : 'New checklist',
+    fields: [
+      { name: 'name', label: 'Checklist name', required: true, full: true },
+      { name: 'items', label: 'Tasks — one per line:  Task title | days after start | priority', type: 'textarea', required: true, full: true, rows: 10,
+        help: 'Example:  File defence | 14 | high      (priority: low, normal, high or urgent)' },
+    ],
+    values: t ? { name: t.name, items: itemsText(t) } : {},
+    onSubmit: async (d) => {
+      const body = { name: d.name, items: parseItems(d.items) };
+      if (t) await api('PUT', `/api/templates/${t.id}`, body); else await api('POST', '/api/templates', body);
+      toast('Checklist saved'); rerender();
+    },
+  });
+  Object.assign(acts, {
+    saveSettings: async (form) => {
+      const body = Object.fromEntries(['firm_name', 'firm_address', 'firm_email', 'firm_phone', 'currency', 'tax_rate', 'invoice_prefix', 'payment_terms', 'holidays'].map((k) => [k, form.elements[k].value]));
+      state.settings = await api('PUT', '/api/settings', body);
+      toast('Settings saved'); renderShell(); renderTimer(); router();
+    },
+    newTpl: () => tplForm(null),
+    editTpl: (el) => tplForm(templates.find((t) => t.id === +el.dataset.id)),
+    delTpl: async (el) => {
+      const t = templates.find((x) => x.id === +el.dataset.id);
+      if (await confirmDialog(h`Delete checklist <b>${t.name}</b>?`)) { await api('DELETE', `/api/templates/${t.id}`); toast('Checklist deleted'); rerender(); }
+    },
+  });
+  const f = (name, lbl, extra = '') => h`<div class="field"><label for="s_${name}">${lbl}</label><input id="s_${name}" name="${name}" value="${st[name]}" ${raw(extra)}></div>`;
+  setView(h`
+    <div class="page-head"><div><h1>Settings</h1><div class="muted sub">Firm details, billing defaults, court holidays, checklists and backups</div></div></div>
+    <div class="grid cols-2">
+      <div class="card"><div class="card-head"><h2>Firm & billing</h2></div><div class="card-body"><form data-submit="saveSettings">
+        <div class="form-grid">
+          <div class="full">${f('firm_name', 'Firm name *', 'required')}</div>
+          <div class="field full"><label for="s_firm_address">Address (shown on invoices)</label><textarea id="s_firm_address" name="firm_address" rows="2">${st.firm_address}</textarea></div>
+          ${f('firm_email', 'Email')}${f('firm_phone', 'Phone')}
+          ${f('currency', 'Currency code', 'maxlength="3" placeholder="USD, EUR, GBP, SAR, AED…"')}
+          ${f('tax_rate', 'Default tax / VAT %', 'type="number" step="0.01" min="0" max="100"')}
+          ${f('invoice_prefix', 'Invoice number prefix')}
+          ${f('payment_terms', 'Payment terms (days)', 'type="number" min="0" step="1"')}
+          <div class="field full"><label for="s_holidays">Court holidays (one date per line, YYYY-MM-DD)</label>
+            <textarea id="s_holidays" name="holidays" rows="5" placeholder="2026-12-25">${st.holidays}</textarea>
+            <div class="muted small">Used by the deadline calculator to skip non-working days.</div></div>
+        </div>
+        <button class="primary" type="submit">Save settings</button>
+      </form></div></div>
+      <div>
+        <div class="card" style="margin-bottom:16px"><div class="card-head"><h2>Task checklists</h2><button data-act="newTpl">+ New checklist</button></div>
+          <div class="card-body flush">${listOrEmpty(templates, (t) => h`<li><div class="grow"><b>${t.name}</b><div class="muted small">${t.items.length} tasks: ${t.items.slice(0, 3).map((x) => x.title).join(', ')}${t.items.length > 3 ? '…' : ''}</div></div>
+            <button class="link" data-act="editTpl" data-id="${t.id}">Edit</button><button class="link danger" data-act="delTpl" data-id="${t.id}">Delete</button></li>`, 'No checklists yet.')}</div></div>
+        <div class="card"><div class="card-head"><h2>Backup</h2></div><div class="card-body">
+          <p style="margin-top:0">Download a copy of the whole database (cases, clients, billing, etc.). Keep it somewhere safe.</p>
+          <a class="btn primary" href="/api/admin/backup">Download database backup</a>
+          <p class="muted small">Uploaded document files are stored separately in the <code>data/uploads</code> folder — copy that folder too.
+          To restore, stop the app and replace <code>data/litigation.db</code> with the backup file.</p>
+        </div></div>
+      </div>
+    </div>`);
 }
 
 // ------------------------------------------------------------------ boot
@@ -1003,6 +1574,7 @@ async function boot() {
   state.me = me;
   await loadLookups();
   renderShell();
+  renderTimer();
   router();
 }
 
