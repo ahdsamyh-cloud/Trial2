@@ -61,7 +61,8 @@ services:
   migrate:
     image: ${REGISTRY:-registry.stelco.internal}/ldms-api:${TAG:?set TAG}
     env_file: [./secrets/api.env]
-    command: ["sh", "-c", "DATABASE_URL=$$MIGRATION_DATABASE_URL npx prisma migrate deploy && node scripts/apply-sql.js"]
+    # Runtime images contain no npm/npx: call the Prisma CLI with node directly.
+    command: ["sh", "-c", "DATABASE_URL=$$MIGRATION_DATABASE_URL node node_modules/prisma/build/index.js migrate deploy && node scripts/apply-sql.js"]
     networks: [data]
     profiles: ["migrate"]
 
@@ -71,14 +72,14 @@ services:
     security_opt: ["no-new-privileges:true"]
     env_file: [./secrets/postgres.env]
     command: ["postgres", "-c", "ssl=on", "-c", "ssl_cert_file=/tls/server.crt", "-c", "ssl_key_file=/tls/server.key", "-c", "ssl_min_protocol_version=TLSv1.2", "-c", "log_connections=on", "-c", "archive_mode=on", "-c", "archive_command=pgbackrest --stanza=ldms archive-push %p"]
-    volumes: [/srv/ldms/pgdata:/var/lib/postgresql/data, ${TLS_DIR:-./secrets/tls}/postgres:/tls:ro]
+    volumes: ["/srv/ldms/pgdata:/var/lib/postgresql/data", "${TLS_DIR:-./secrets/tls}/postgres:/tls:ro"]
     networks: [data]
 
   redis:
     image: redis:7.4-alpine
     <<: *hardening
     command: ["redis-server", "--tls-port", "6380", "--port", "0", "--tls-cert-file", "/tls/redis.crt", "--tls-key-file", "/tls/redis.key", "--tls-ca-cert-file", "/tls/ca.crt", "--requirepass", "${REDIS_PASSWORD:?}", "--appendonly", "yes"]
-    volumes: [/srv/ldms/redis:/data, ${TLS_DIR:-./secrets/tls}/redis:/tls:ro]
+    volumes: ["/srv/ldms/redis:/data", "${TLS_DIR:-./secrets/tls}/redis:/tls:ro"]
     networks: [data]
 
   clamav:
