@@ -48,7 +48,6 @@ for (const k of ['DEV_POSTGRES_PASSWORD', 'DEV_APP_DB_PASSWORD']) {
 if (existsSync(apiEnv)) {
   console.log('apps/api/.env already exists - keeping it.');
   const api = parse(apiEnv);
-  if (api.DEMO_PASSWORD) console.log(`\nDemo password:    ${api.DEMO_PASSWORD}\nDemo TOTP secret: ${api.DEMO_TOTP_SECRET}`);
 } else {
   const demoPassword = `Ldms-${randomBytes(12).toString('base64url')}`;
   const totp = base32(randomBytes(20));
@@ -87,7 +86,6 @@ if (existsSync(apiEnv)) {
     ...Object.entries(env).map(([k, v]) => `${k}=${v}`), '',
   ].join('\n'), { mode: 0o600 });
   console.log('Created apps/api/.env');
-  console.log(`\nDemo password:    ${demoPassword}\nDemo TOTP secret: ${totp}`);
 }
 // 3) Integration-test settings: the separate ldms_test database (created by infra/postgres/init-dev.sh).
 //    The test run wipes and re-seeds that database every time; your dev data in `ldms` is untouched.
@@ -102,5 +100,8 @@ if (existsSync(testEnv)) {
   ].join('\n'), { mode: 0o600 });
   console.log('Created apps/api/.env.test');
 }
-console.log('\nSign-in needs a 6-digit code: add the TOTP secret to an authenticator app, or run `pnpm demo:code`.');
+// SECURITY: secrets are never printed (terminal scrollback and CI logs are not a safe place for them).
+console.log('\nDemo login: every demo user (hod, uh.lit, lo.lit1, ...) uses the password in the DEMO_PASSWORD line');
+console.log('of apps/api/.env (open it in Notepad, or: findstr DEMO_PASSWORD apps\\api\\.env  /  grep DEMO_PASSWORD apps/api/.env).');
+console.log('For the 6-digit code run `pnpm demo:code`, or add DEMO_TOTP_SECRET from the same file to an authenticator app.');
 console.log('Next: docker compose -f infra/compose.dev.yml up -d   then   pnpm setup:db   then   pnpm dev');

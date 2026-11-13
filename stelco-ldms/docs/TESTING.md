@@ -45,7 +45,7 @@ Run these from the `stelco-ldms` folder.
 Start the app with `pnpm dev` and open **http://localhost:3000**.
 
 **Signing in:**
-- Every demo user has the same password: the one `pnpm setup:env` printed. Run it again any time to see it.
+- Every demo user has the same password: the `DEMO_PASSWORD=` line in `apps/api/.env`. Open it in Notepad, or run `findstr DEMO_PASSWORD apps\api\.env`.
 - For the 6-digit code, run `pnpm demo:code` in a second window. Each code works only once, so wait for the next 30-second window to sign in as another user.
 - Use a private/incognito window per user to stay signed in as two people at once.
 - Emails the app sends appear in Mailpit: **http://localhost:8025**.

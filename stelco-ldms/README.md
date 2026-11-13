@@ -35,14 +35,14 @@ pnpm dev
 | Command | What it does |
 |---|---|
 | `pnpm install` | Installs all dependencies. |
-| `pnpm setup:env` | Creates `infra/.env` and `apps/api/.env` with random local passwords and keys. It prints the demo password and the TOTP secret. |
+| `pnpm setup:env` | Creates `infra/.env` and `apps/api/.env` with random local passwords and keys. The demo password is stored in `apps/api/.env` (`DEMO_PASSWORD=` line). |
 | `docker compose -f infra/compose.dev.yml up -d` | Starts Postgres, Redis, ClamAV, MinIO and Mailpit. |
 | `pnpm setup:db` | Migrates the database and seeds reference data and demo users. |
 | `pnpm dev` | Starts the API on :4000 and the web app on :3000. Ctrl+C stops both. `pnpm start` does the same. |
 
 **Signing in:**
 1. Open **http://localhost:3000**.
-2. Sign in as **`hod`**, **`adm.it`** or another demo user (full list in `CLAUDE.md`). Use the demo password that `pnpm setup:env` printed.
+2. Sign in as **`hod`**, **`adm.it`** or another demo user (full list in `CLAUDE.md`). Use the password on the `DEMO_PASSWORD=` line of `apps/api/.env`. Open it in Notepad, or run `findstr DEMO_PASSWORD apps\api\.env`.
 3. For the 6-digit code, run `pnpm demo:code`, or add the TOTP secret to an authenticator app. Each code works only once. If it is refused, wait for the next 30-second window.
 
 **Good to know:**
