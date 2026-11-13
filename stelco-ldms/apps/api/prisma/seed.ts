@@ -157,7 +157,7 @@ export async function seed() {
     if (process.env.NODE_ENV === 'production') throw new Error('Refusing to seed demo data in production');
     await demoUsers();
     const demo = await import('./seed-demo').catch(() => null);
-    if (demo) await demo.seedDemo(db);
+    if (demo) { await demo.seedDemo(db); await demo.seedAwareness(db); }
   }
 }
 

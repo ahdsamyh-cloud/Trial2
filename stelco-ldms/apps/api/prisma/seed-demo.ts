@@ -51,4 +51,26 @@ export async function seedDemo(db: PrismaClient) {
   const d = await db.dissemination.create({ data: { subject: 'Reminder: outage reporting duty', body: 'Outages longer than 4 hours must be reported to the regulator within 48 hours.', lawId: law.id, sentById: cmp1, dueAt: new Date(Date.now() + 7 * day) } });
   await db.disseminationRecipient.createMany({ data: [{ disseminationId: d.id, departmentId: fin.id }, { disseminationId: d.id, departmentId: ops.id }] });
   await db.licence.create({ data: { name: 'Generation licence — Male', kind: 'LICENCE', regulatorId: ura.id, number: 'URA/GEN/0001', expiresOn: new Date(Date.now() + 75 * day) } });
+
+  await seedAwareness(db);
+}
+
+/** Awareness demo data (separately idempotent). */
+export async function seedAwareness(db: PrismaClient) {
+  await db.$executeRaw`SELECT set_config('app.ctx', 'system', false)`;
+  if (await db.employee.count({ where: { staffNo: 'E0001' } })) return;
+  const depts = await db.department.findMany({ where: { code: { in: ['FIN', 'HR', 'PROC', 'OPS', 'CS'] } } });
+  const names = ['Aminath Shifa', 'Ahmed Rasheed', 'Fathimath Nazra', 'Mohamed Fayaz', 'Hawwa Leena', 'Ibrahim Nihad', 'Mariyam Saba', 'Ali Shamin', 'Aishath Rifa', 'Hussain Zahir'];
+  let n = 1;
+  for (const d of depts) for (const nm of names.slice(0, 4)) {
+    await db.employee.create({ data: { staffNo: `E${String(n).padStart(4, '0')}`, name: `${nm} (${d.code})`, departmentId: d.id } });
+    n++;
+  }
+  const awr1 = (await db.user.findUniqueOrThrow({ where: { username: 'lo.awr1' } })).id;
+  const year = new Date().getUTCFullYear();
+  const plan = await db.awarenessPlan.upsert({ where: { year }, create: { year }, update: {} });
+  const item = await db.planItem.create({ data: { planId: plan.id, topic: 'Contract management basics', quarter: Math.floor(new Date().getUTCMonth() / 3) + 1, targetDeptIds: [] } });
+  const now = Date.now();
+  await db.awarenessSession.create({ data: { planItemId: item.id, title: 'Contract management basics (demo)', topic: 'Contracts', format: 'IN_PERSON', startsAt: new Date(now - 30 * 60_000), endsAt: new Date(now + 3 * 3600_000), venue: 'Training room, HQ', presenterIds: [awr1], status: 'SCHEDULED' } });
+  await db.faqEntry.create({ data: { question: 'Who can sign contracts on behalf of STELCO?', answer: 'The Managing Director, or a person holding a valid Power of Attorney for that type of contract. Check the PoA register or ask Legal.', tags: ['contracts', 'poa'] } });
 }

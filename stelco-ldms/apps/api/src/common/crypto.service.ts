@@ -74,7 +74,9 @@ export class CryptoService {
   }
 
   verify<T extends Record<string, unknown>>(token: string): (T & { exp: number }) | null {
-    const [body, sig] = token.split('.');
+    const parts = token.split('.');
+    if (parts.length !== 2) return null; // exactly body.signature — no trailing segments
+    const [body, sig] = parts as [string, string];
     if (!body || !sig || !this.safeEqual(sig, this.hmac(body))) return null;
     try {
       const data = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));

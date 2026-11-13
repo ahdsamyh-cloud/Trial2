@@ -68,17 +68,21 @@ describe('compliance', () => {
 
     const finUser = await as('req.fin');
     const cycles = await finUser.get('/compliance/cycles');
-    const cycle = cycles.body.find((c: { departmentId: string; status: string }) => c.departmentId === fin && c.status === 'ISSUED');
+    let cycle: { id: string } | undefined;
+    let detail: { body: { items: { id: string; obligationId: string }[] } } | undefined;
+    for (const c of cycles.body.filter((x: { departmentId: string; status: string }) => x.departmentId === fin && x.status === 'ISSUED')) {
+      const d = await finUser.get(`/compliance/cycles/${c.id}`);
+      if (d.body.items.some((i: { obligationId: string }) => i.obligationId === obligationId)) { cycle = c; detail = d; }
+    }
     expect(cycle).toBeTruthy();
-    expect((await (await as('req.hr')).get(`/compliance/cycles/${cycle.id}`)).status).toBe(404);
-    const detail = await finUser.get(`/compliance/cycles/${cycle.id}`);
-    const item = detail.body.items.find((i: { obligationId: string }) => i.obligationId === obligationId);
-    expect((await finUser.post(`/compliance/cycles/${cycle.id}/submit`)).status).toBe(400); // unanswered
+    expect((await (await as('req.hr')).get(`/compliance/cycles/${cycle!.id}`)).status).toBe(404);
+    const item = detail!.body.items.find((i) => i.obligationId === obligationId)!;
+    expect((await finUser.post(`/compliance/cycles/${cycle!.id}/submit`)).status).toBe(400); // unanswered
     expect((await finUser.post(`/compliance/items/${item.id}/response`, { response: 'Q3 report submitted late on 20 Oct.' })).status).toBe(200);
     const ev = await finUser.upload('/documents', { ownerType: 'checkItem', ownerId: item.id }, { file: [{ name: 'q3-report.pdf', data: PDF }] });
     expect(ev.status).toBe(201);
-    for (const other of detail.body.items.filter((i: { id: string }) => i.id !== item.id)) await finUser.post(`/compliance/items/${other.id}/response`, { response: 'Done' });
-    expect((await finUser.post(`/compliance/cycles/${cycle.id}/submit`)).status).toBe(200);
+    for (const other of detail!.body.items.filter((i) => i.id !== item.id)) await finUser.post(`/compliance/items/${other.id}/response`, { response: 'Done' });
+    expect((await finUser.post(`/compliance/cycles/${cycle!.id}/submit`)).status).toBe(200);
     expect((await finUser.post(`/compliance/items/${item.id}/response`, { response: 'change after submit' })).status).toBe(409);
 
     expect((await finUser.post(`/compliance/items/${item.id}/rating`, { rating: 'COMPLIANT' })).status).toBe(403);

@@ -67,6 +67,7 @@ describe('field-level encryption and signing', () => {
     expect(crypto.verify<{ v: string }>(t)?.v).toBe('abc');
     expect(crypto.verify(t.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')))).toBeNull();
     expect(crypto.verify(crypto.sign({ v: 'x' }, -1))).toBeNull();
+    expect(crypto.verify(`${t}.extra`)).toBeNull();
   });
 });
 
