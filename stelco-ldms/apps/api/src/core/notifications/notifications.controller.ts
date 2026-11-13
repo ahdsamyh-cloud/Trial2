@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { Authenticated } from '../../common/decorators';
 import { currentUser } from '../../common/context';
 import { PrismaService } from '../../common/prisma.service';
-import { parse } from '../../common/zod';
+import { parse, qs } from '../../common/zod';
 
 const prefSchema = z.object({ email: z.boolean(), digest: z.enum(['NONE', 'DAILY', 'WEEKLY']) }).strict();
 
@@ -13,7 +13,8 @@ export class NotificationsController {
 
   @Get()
   @Authenticated()
-  async list(@Query('unread') unread?: string) {
+  async list(@Query('unread') unreadQ?: unknown) {
+    const unread = qs(unreadQ, 5);
     const userId = currentUser().id;
     const [rows, unreadCount] = await Promise.all([
       this.prisma.base.notification.findMany({ where: { userId, ...(unread === 'true' ? { readAt: null } : {}) }, orderBy: { createdAt: 'desc' }, take: 100 }),

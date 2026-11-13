@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import { z } from 'zod';
 import { UNITS } from '@ldms/shared';
 import { Can } from '../../common/decorators';
-import { parse } from '../../common/zod';
+import { parse, qrec } from '../../common/zod';
 import { AuditService } from '../audit/audit.service';
 import { CalendarService } from './calendar.service';
 
@@ -26,7 +26,8 @@ export class CalendarController {
   /** "Add to my calendar": .ics for one event or a range (opens in Outlook). */
   @Get('ics')
   @Can('calendar:read')
-  async ics(@Query() query: Record<string, string>, @Res() res: Response) {
+  async ics(@Query() raw: unknown, @Res() res: Response) {
+    const query = qrec(raw);
     const ids = query.ids ? query.ids.split(',').slice(0, 200) : null;
     const body = ids ? await this.calendar.ics(ids) : await this.calendar.ics('ALL', parse(q.pick({ from: true, to: true }), query));
     await this.audit.log({ action: 'calendar.ics', meta: { count: ids?.length ?? 'range' } });

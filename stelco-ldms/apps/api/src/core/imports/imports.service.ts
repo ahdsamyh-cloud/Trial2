@@ -27,7 +27,7 @@ const FIELDS: Record<Kind, FieldDef[]> = {
   ],
   laws: [
     { key: 'title', header: 'Title', re: /^(title|name|law)/i, required: true },
-    { key: 'type', header: 'Type', re: /^type|category/i },
+    { key: 'type', header: 'Type', re: /^(?:type|.*category)/i },
     { key: 'regulator', header: 'Regulator', re: /regulator|issuer|authority/i },
     { key: 'issuedOn', header: 'Issued on', re: /issu|enact|gazett/i },
     { key: 'effectiveOn', header: 'Effective on', re: /effective|commence/i },

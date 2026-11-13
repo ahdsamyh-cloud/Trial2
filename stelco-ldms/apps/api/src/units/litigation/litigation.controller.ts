@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { LITIGATION_STATUSES } from '@ldms/shared';
 import { Can } from '../../common/decorators';
 import { badRequest } from '../../common/errors';
-import { money, pageQuery, parse } from '../../common/zod';
+import { money, pageQuery, parse, qs } from '../../common/zod';
 import { ExportService } from '../../core/export/export.service';
 import { CASE_TYPES, LitigationService, OUR_ROLES } from './litigation.service';
 import { LIT_FIELDS, LitigationImportService } from './import.service';
@@ -163,7 +163,8 @@ export class LitigationController {
   // ------------------------------------------------------------------ reports
   @Get('reports/exposure')
   @Can('report:read')
-  async exposure(@Query('format') format: string | undefined, @Res({ passthrough: true }) res: Response) {
+  async exposure(@Query('format') formatQ: unknown, @Res({ passthrough: true }) res: Response) {
+    const format = qs(formatQ, 10);
     const r = await this.lit.exposureReport();
     if (format === 'xlsx') {
       return this.exporter.send(res, 'contingent-liability', [
@@ -177,8 +178,8 @@ export class LitigationController {
 
   @Get('reports/upcoming-hearings')
   @Can('matter:read')
-  upcoming(@Query('days') days?: string) {
-    return this.lit.upcomingHearings(Math.min(365, Number(days) || 30));
+  upcoming(@Query('days') days?: unknown) {
+    return this.lit.upcomingHearings(Math.min(365, Number(qs(days, 5)) || 30));
   }
 
   @Get('reports/missing-summaries')
@@ -189,7 +190,8 @@ export class LitigationController {
 
   @Get('reports/stale')
   @Can('matter:read')
-  stale(@Query('days') days?: string) {
+  stale(@Query('days') daysQ?: unknown) {
+    const days = qs(daysQ, 5);
     return this.lit.staleCases(days ? Math.max(1, Number(days)) : undefined);
   }
 

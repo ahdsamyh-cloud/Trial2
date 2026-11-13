@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import { z } from 'zod';
 import { DRAFTING_STATUSES } from '@ldms/shared';
 import { Can } from '../../common/decorators';
-import { money, parse } from '../../common/zod';
+import { money, parse, qrec, qs } from '../../common/zod';
 import { ExportService } from '../../core/export/export.service';
 import { DraftingService } from './drafting.service';
 import { RegistersService } from './registers.service';
@@ -54,8 +54,8 @@ export class DraftingController {
   // ------------------------------------------------------------------ library
   @Get('templates')
   @Can('matter:read')
-  templates(@Query('q') q?: string) {
-    return this.reg.templates(q?.slice(0, 100));
+  templates(@Query('q') q?: unknown) {
+    return this.reg.templates(qs(q, 100));
   }
 
   @Post('templates')
@@ -75,8 +75,8 @@ export class DraftingController {
 
   @Get('clauses')
   @Can('matter:read')
-  clauses(@Query('q') q?: string, @Query('tag') tag?: string) {
-    return this.reg.clauses(q?.slice(0, 100), tag?.slice(0, 40));
+  clauses(@Query('q') q?: unknown, @Query('tag') tag?: unknown) {
+    return this.reg.clauses(qs(q, 100), qs(tag, 40));
   }
 
   @Post('clauses')
@@ -101,8 +101,9 @@ export class DraftingController {
 
   @Get('contracts')
   @Can('matter:read')
-  async contracts(@Query() q: Record<string, string>, @Res({ passthrough: true }) res: Response) {
-    const rows = await this.reg.contracts({ q: q.q?.slice(0, 100), status: q.status, expiringDays: q.expiringDays ? Number(q.expiringDays) : undefined, ownerDeptId: q.ownerDeptId });
+  async contracts(@Query() query: unknown, @Res({ passthrough: true }) res: Response) {
+    const q = qrec(query);
+    const rows = await this.reg.contracts({ q: q.q?.slice(0, 100), status: q.status || undefined, expiringDays: q.expiringDays ? Number(q.expiringDays) : undefined, ownerDeptId: q.ownerDeptId });
     if (q.format === 'xlsx') {
       return this.exporter.send(res, 'contracts', [
         { key: 'title', header: 'Title', width: 40 }, { key: 'parties', header: 'Parties', width: 40, value: (r) => r.parties.join('; ') }, { key: 'value', header: 'Value', value: (r) => (r.value ? Number(r.value) : '') },
@@ -136,8 +137,8 @@ export class DraftingController {
 
   @Get('poa')
   @Can('matter:read')
-  poas(@Query('status') status?: string) {
-    return this.reg.poas(status);
+  poas(@Query('status') status?: unknown) {
+    return this.reg.poas(qs(status, 20));
   }
 
   @Post('poa')
@@ -162,8 +163,8 @@ export class DraftingController {
   // ------------------------------------------------------------------ opinions
   @Get('opinions')
   @Can('matter:read')
-  opinions(@Query('q') q?: string, @Query('tag') tag?: string) {
-    return this.reg.opinions(q?.slice(0, 200), tag?.slice(0, 40));
+  opinions(@Query('q') q?: unknown, @Query('tag') tag?: unknown) {
+    return this.reg.opinions(qs(q, 200), qs(tag, 40));
   }
 
   @Post('opinions')

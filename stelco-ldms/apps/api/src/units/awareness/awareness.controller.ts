@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { SESSION_STATUSES } from '@ldms/shared';
 import { Authenticated, Can, Public } from '../../common/decorators';
 import { badRequest } from '../../common/errors';
-import { parse } from '../../common/zod';
+import { parse, qrec, qs } from '../../common/zod';
 import { AwarenessService } from './awareness.service';
 
 const id = z.string().max(40);
@@ -49,7 +49,8 @@ export class AwarenessController {
   // sessions
   @Get('sessions')
   @Authenticated()
-  sessions(@Query() q: Record<string, string>) {
+  sessions(@Query() query: unknown) {
+    const q = qrec(query);
     return this.awr.sessions({ from: q.from ? new Date(q.from) : undefined, to: q.to ? new Date(q.to) : undefined, status: q.status });
   }
 
@@ -144,8 +145,8 @@ export class AwarenessController {
   // employees & records
   @Get('employees')
   @Can('matter:read', 'awr:write')
-  employees(@Query('q') q?: string, @Query('departmentId') departmentId?: string) {
-    return this.awr.employees(q?.slice(0, 100), departmentId);
+  employees(@Query('q') q?: unknown, @Query('departmentId') departmentId?: unknown) {
+    return this.awr.employees(qs(q, 100), qs(departmentId, 40));
   }
 
   @Get('employees/:id/history')
@@ -157,9 +158,9 @@ export class AwarenessController {
   @Post('employees/import')
   @Can('awr:write')
   @UseInterceptors(xlsx())
-  importEmployees(@UploadedFile() file: Express.Multer.File | undefined, @Query('commit') commit?: string) {
+  importEmployees(@UploadedFile() file: Express.Multer.File | undefined, @Query('commit') commit?: unknown) {
     if (!file) throw badRequest('Choose the staff list');
-    return this.awr.importEmployees(file, commit === 'true');
+    return this.awr.importEmployees(file, qs(commit, 5) === 'true');
   }
 
   // bulletins & FAQ (knowledge base: everyone signed in can read)
@@ -193,8 +194,8 @@ export class AwarenessController {
 
   @Get('faq')
   @Authenticated()
-  faq(@Query('q') q?: string) {
-    return this.awr.faq(q?.slice(0, 100));
+  faq(@Query('q') q?: unknown) {
+    return this.awr.faq(qs(q, 100));
   }
 
   @Post('faq')

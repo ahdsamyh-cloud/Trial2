@@ -4,7 +4,7 @@ import type { Response } from 'express';
 import { z } from 'zod';
 import { Authenticated, Can } from '../../common/decorators';
 import { badRequest } from '../../common/errors';
-import { parse } from '../../common/zod';
+import { parse, qs } from '../../common/zod';
 import { config } from '../../config';
 import { DocumentsService, OwnerType } from './documents.service';
 
@@ -38,9 +38,9 @@ export class DocumentsController {
 
   @Get('documents')
   @Authenticated()
-  list(@Query('ownerType') ownerType: string, @Query('ownerId') ownerId = '') {
-    const t = z.enum(OWNER_TYPES).parse(ownerType);
-    return this.docs.listFor(t as OwnerType, ownerId.slice(0, 40));
+  list(@Query('ownerType') ownerType: unknown, @Query('ownerId') ownerId?: unknown) {
+    const t = z.enum(OWNER_TYPES).parse(qs(ownerType, 20));
+    return this.docs.listFor(t as OwnerType, qs(ownerId, 40) ?? '');
   }
 
   @Get('documents/:id')
@@ -91,15 +91,16 @@ export class DocumentsController {
 
   @Delete('documents/:id')
   @Can('doc:write')
-  remove(@Param('id') id: string, @Query('reason') reason = '') {
+  remove(@Param('id') id: string, @Query('reason') reasonQ?: unknown) {
+    const reason = qs(reasonQ, 500) ?? '';
     if (reason.trim().length < 3) throw badRequest('Give a reason for deleting');
-    return this.docs.remove(id, reason.slice(0, 500));
+    return this.docs.remove(id, reason);
   }
 
   @Get('documents/:id/compare')
   @Can('doc:read')
-  compare(@Param('id') id: string, @Query('a') a: string, @Query('b') b: string) {
-    return this.docs.compare(id, Number(a), Number(b));
+  compare(@Param('id') id: string, @Query('a') a: unknown, @Query('b') b: unknown) {
+    return this.docs.compare(id, Number(qs(a, 6)), Number(qs(b, 6)));
   }
 
   @Post('holds')

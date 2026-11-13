@@ -62,6 +62,10 @@ describe('hardening: retention/disposal, key rotation, headers', () => {
     expect(JSON.stringify(r.body)).not.toMatch(/at \w+ \(|node_modules|prisma/i);
     const bad = await c.post('/matters', { unit: 'CMP', title: 'x', extraField: 'mass-assignment' });
     expect(bad.status).toBe(400);
+    // repeated query keys arrive as arrays: refused instead of reaching string code paths
+    expect((await c.get('/search?q=a&q=b')).status).toBe(400);
+    expect((await c.get('/drafting/opinions?q=x&q=y')).status).toBe(400);
+    expect((await c.get('/search?q=contract')).status).toBe(200);
     const big = await c.post('/matters', { unit: 'CMP', title: 'x'.repeat(2_000_000) });
     expect([400, 413]).toContain(big.status);
   });

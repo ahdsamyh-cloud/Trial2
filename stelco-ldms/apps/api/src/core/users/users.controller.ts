@@ -6,7 +6,7 @@ import { AdminNetwork, Authenticated, Can, ReAuth } from '../../common/decorator
 import { currentUser } from '../../common/context';
 import { forbidden, notFound } from '../../common/errors';
 import { PrismaService } from '../../common/prisma.service';
-import { parse } from '../../common/zod';
+import { parse, qrec, qs } from '../../common/zod';
 import { AuditService } from '../audit/audit.service';
 import { SessionService } from '../auth/session.service';
 import { ExportService } from '../export/export.service';
@@ -42,14 +42,16 @@ export class UsersController {
 
   @Get()
   @Can('users:read', 'users:manage')
-  list(@Query() q: Record<string, string>) {
+  list(@Query() query: unknown) {
+    const q = qrec(query);
     return this.users.list({ q: q.q?.slice(0, 100), status: q.status, role: q.role, unit: q.unit });
   }
 
   /** Name directory for assignment pickers (legal staff). */
   @Get('directory')
   @Authenticated()
-  directory(@Query('unit') unit?: string) {
+  directory(@Query('unit') unitQ?: unknown) {
+    const unit = qs(unitQ, 5);
     const u = currentUser();
     if (u.isAdminAccount && !u.perms.has('matter:read')) throw forbidden();
     return this.users.directory(UNITS.includes(unit as never) ? (unit as never) : undefined);
@@ -57,7 +59,8 @@ export class UsersController {
 
   @Get('access-review')
   @Can('accessreview:read')
-  async accessReview(@Query('format') format: string | undefined, @Res({ passthrough: true }) res: Response) {
+  async accessReview(@Query('format') formatQ: unknown, @Res({ passthrough: true }) res: Response) {
+    const format = qs(formatQ, 10);
     const rows = await this.users.accessReview();
     await this.audit.log({ action: 'user.access-review', meta: { rows: rows.length } });
     if (format === 'xlsx') {

@@ -4,7 +4,7 @@ import { AdminNetwork, Authenticated, Can } from '../../common/decorators';
 import { currentUser } from '../../common/context';
 import { badRequest, forbidden, notFound } from '../../common/errors';
 import { PrismaService } from '../../common/prisma.service';
-import { parse } from '../../common/zod';
+import { parse, qs } from '../../common/zod';
 import { AuditService } from '../audit/audit.service';
 import { CONFIG_ENTITIES, SETTINGS, SETTING_DEFAULTS } from './config.registry';
 import { SettingsService } from './settings.service';
@@ -48,11 +48,12 @@ export class ConfigController {
 
   @Get(':entity')
   @Authenticated()
-  async list(@Param('entity') name: string, @Query('q') q?: string) {
+  async list(@Param('entity') name: string, @Query('q') qRaw?: unknown) {
+    const q = qs(qRaw, 100);
     const e = this.entity(name);
     const user = currentUser();
     if (!user.perms.has('config:read') && !(e.publicRead && user.perms.has('portal:use'))) throw forbidden();
-    const where = q ? { OR: e.searchFields.map((f) => ({ [f]: { contains: q.slice(0, 100), mode: 'insensitive' } })) } : {};
+    const where = q ? { OR: e.searchFields.map((f) => ({ [f]: { contains: q, mode: 'insensitive' } })) } : {};
     return this.delegate(e.model).findMany({ where, orderBy: e.orderBy, take: 1000 });
   }
 

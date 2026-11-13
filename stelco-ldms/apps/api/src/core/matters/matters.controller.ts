@@ -5,7 +5,7 @@ import { UNITS } from '@ldms/shared';
 import { Authenticated, Can, ReAuth } from '../../common/decorators';
 import { forbidden } from '../../common/errors';
 import { PrismaService } from '../../common/prisma.service';
-import { pageQuery, parse } from '../../common/zod';
+import { pageQuery, parse, qs } from '../../common/zod';
 import { ExportService } from '../export/export.service';
 import { PolicyService } from '../policy/policy.service';
 import { SlaService } from '../sla/sla.service';
@@ -66,8 +66,8 @@ export class MattersController {
 
   @Get('workload')
   @Can('matter:read')
-  workload(@Query('unit') unit: string) {
-    return this.matters.workload(z.enum(UNITS).parse(unit));
+  workload(@Query('unit') unit: unknown) {
+    return this.matters.workload(z.enum(UNITS).parse(qs(unit, 5)));
   }
 
   @Post('bulk/assign')

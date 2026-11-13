@@ -37,12 +37,12 @@ const SYNONYMS: Record<LitField, RegExp> = {
   courtCaseNo: /^(case\s*(no|number|#)|court\s*case|suit\s*no)/i,
   title: /^(title|case\s*title|matter)$/i,
   court: /^(court|forum|tribunal)/i,
-  parties: /^part(y|ies)|versus|vs/i,
+  parties: /^(?:part(?:y|ies)|.*\bversus\b|.*\bvs\b)/i,
   subject: /^(subject|nature|description)/i,
   externalLawyer: /(lawyer|counsel|law\s*firm|advocate|attorney)/i,
   filingDate: /(fil(ing|ed)\s*date|date\s*(of\s*)?fil)/i,
   nextHearing: /next\s*hearing/i,
-  status: /^status|stage/i,
+  status: /^(?:status|.*stage)/i,
   claimAmount: /(claim|amount|value)/i,
   currency: /^(currency|ccy)$/i,
   caseType: /(case\s*type|type\s*of\s*case|category)/i,
@@ -144,7 +144,7 @@ function mapRole(s: string, parties: string) {
   if (/third/.test(v)) return 'THIRD_PARTY';
   if (/defend|respond/.test(v)) return 'DEFENDANT';
   const p = parties.toLowerCase();
-  if (/^stelco|state electric/.test(p)) return 'PLAINTIFF';
+  if (/^(?:stelco|state electric)/.test(p)) return 'PLAINTIFF';
   return 'DEFENDANT';
 }
 

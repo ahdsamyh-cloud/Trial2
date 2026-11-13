@@ -4,6 +4,7 @@ import type { Response } from 'express';
 import { z } from 'zod';
 import { Can } from '../../common/decorators';
 import { badRequest } from '../../common/errors';
+import { qs } from '../../common/zod';
 import { ImportsService } from './imports.service';
 
 const kind = z.enum(['contracts', 'laws']);
@@ -24,8 +25,8 @@ export class ImportsController {
   @Post(':kind')
   @Can('draft:draft', 'matter:write', 'cmp:write')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024, files: 1 } }))
-  run(@Param('kind') k: string, @UploadedFile() file: Express.Multer.File | undefined, @Query('commit') commit?: string) {
+  run(@Param('kind') k: string, @UploadedFile() file: Express.Multer.File | undefined, @Query('commit') commit?: unknown) {
     if (!file) throw badRequest('Choose the Excel file');
-    return this.imports.run(kind.parse(k), file, commit === 'true');
+    return this.imports.run(kind.parse(k), file, qs(commit, 5) === 'true');
   }
 }

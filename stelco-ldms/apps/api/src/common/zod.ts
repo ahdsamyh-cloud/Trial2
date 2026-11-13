@@ -1,4 +1,19 @@
 import { z, ZodTypeAny } from 'zod';
+import { badRequest } from './errors';
+
+/** A single query-string value. Repeated keys (?a=1&a=2) arrive as arrays and are refused. */
+export function qs(v: unknown, max = 200): string | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== 'string') throw badRequest('Invalid query parameter');
+  return v.slice(0, max);
+}
+
+/** All values of a query object as single strings. */
+export function qrec(q: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries((q ?? {}) as Record<string, unknown>)) out[k] = qs(v, 500) ?? '';
+  return out;
+}
 
 /** Parse untrusted input with a strict schema (unknown keys rejected → no mass assignment). */
 export function parse<T extends ZodTypeAny>(schema: T, input: unknown): z.infer<T> {

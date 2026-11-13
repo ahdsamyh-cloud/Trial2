@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
 import { Can } from '../../common/decorators';
-import { parse } from '../../common/zod';
+import { parse, qrec, qs } from '../../common/zod';
 import { ComplianceService, FREQUENCIES } from './compliance.service';
 
 const id = z.string().max(40);
@@ -38,7 +38,8 @@ export class ComplianceController {
   // laws
   @Get('laws')
   @Can('matter:read', 'cmp:write', 'portal:use')
-  laws(@Query() q: Record<string, string>) {
+  laws(@Query() query: unknown) {
+    const q = qrec(query);
     return this.cmp.laws({ q: q.q?.slice(0, 100), type: q.type, status: q.status, regulatorId: q.regulatorId });
   }
 
@@ -69,7 +70,8 @@ export class ComplianceController {
   // obligations
   @Get('obligations')
   @Can('matter:read', 'cmp:write', 'portal:use')
-  obligations(@Query() q: Record<string, string>) {
+  obligations(@Query() query: unknown) {
+    const q = qrec(query);
     return this.cmp.obligations({ lawId: q.lawId, departmentId: q.departmentId, q: q.q?.slice(0, 100) });
   }
 
@@ -88,8 +90,8 @@ export class ComplianceController {
   // change log
   @Get('changes')
   @Can('matter:read', 'cmp:write')
-  changes(@Query('status') status?: string) {
-    return this.cmp.changes(status);
+  changes(@Query('status') status?: unknown) {
+    return this.cmp.changes(qs(status, 30));
   }
 
   @Post('changes')
@@ -134,7 +136,8 @@ export class ComplianceController {
 
   @Get('cycles')
   @Can('matter:read', 'cmp:write', 'portal:use')
-  cycles(@Query() q: Record<string, string>) {
+  cycles(@Query() query: unknown) {
+    const q = qrec(query);
     return this.cmp.cycles({ status: q.status, departmentId: q.departmentId });
   }
 
@@ -176,7 +179,8 @@ export class ComplianceController {
   // findings
   @Get('findings')
   @Can('matter:read', 'cmp:write', 'portal:use')
-  findings(@Query() q: Record<string, string>) {
+  findings(@Query() query: unknown) {
+    const q = qrec(query);
     return this.cmp.findings({ status: q.status, departmentId: q.departmentId, severity: q.severity, overdue: q.overdue === 'true' });
   }
 
@@ -197,7 +201,8 @@ export class ComplianceController {
   // licences
   @Get('licences')
   @Can('matter:read', 'cmp:write')
-  licences(@Query('expiringDays') days?: string) {
+  licences(@Query('expiringDays') daysQ?: unknown) {
+    const days = qs(daysQ, 5);
     return this.cmp.licences({ expiringDays: days ? Number(days) : undefined });
   }
 

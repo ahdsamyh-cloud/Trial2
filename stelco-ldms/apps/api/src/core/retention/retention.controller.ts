@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
 import { Can, ReAuth } from '../../common/decorators';
-import { parse } from '../../common/zod';
+import { parse, qs } from '../../common/zod';
 import { RetentionService } from './retention.service';
 
 @Controller('retention')
@@ -10,8 +10,8 @@ export class RetentionController {
 
   @Get('disposals')
   @Can('disposal:approve')
-  list(@Query('status') status?: string) {
-    return this.retention.list(z.enum(['PENDING', 'APPROVED', 'REJECTED', 'DISPOSED']).default('PENDING').parse(status));
+  list(@Query('status') status?: unknown) {
+    return this.retention.list(z.enum(['PENDING', 'APPROVED', 'REJECTED', 'DISPOSED']).default('PENDING').parse(qs(status, 20)));
   }
 
   @Post('disposals/:id')
