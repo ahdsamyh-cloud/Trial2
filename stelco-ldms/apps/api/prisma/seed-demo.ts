@@ -39,4 +39,16 @@ export async function seedDemo(db: PrismaClient) {
     await db.calendarEvent.create({ data: { kind: 'HEARING', unit: 'LIT', title: `${reference} hearing (${c.no})`, sourceType: 'Hearing', sourceId: h.id, startsAt, ownerId: c.officer, matterId: m.id } });
     await db.statusTransition.create({ data: { matterId: m.id, toStatus: c.status, action: 'seed', actorId: hod } });
   }
+
+  // ---------------- Compliance
+  const ura = await db.regulator.findUniqueOrThrow({ where: { name: 'Utility Regulatory Authority' } });
+  const cmp1 = await uid(db, 'lo.cmp1');
+  const law = await db.law.create({ data: { title: 'Electricity Regulations (demo)', type: 'REGULATION', regulatorId: ura.id, status: 'IN_FORCE', summary: 'Licensing, safety and reporting duties for electricity utilities.', officerId: cmp1, effectiveOn: new Date('2024-01-01') } });
+  await db.lawVersion.create({ data: { lawId: law.id, versionNo: 1, notes: 'Initial version' } });
+  const ops = await db.department.findUniqueOrThrow({ where: { code: 'OPS' } });
+  await db.obligation.create({ data: { lawId: law.id, description: 'Report every outage longer than 4 hours to the regulator within 48 hours', article: 'Reg. 21', frequency: 'QUARTERLY', risk: 'HIGH', evidenceRequired: 'Outage reports sent to the regulator', departmentIds: [ops.id, fin.id], nextCheckAt: new Date() } });
+  await db.obligation.create({ data: { lawId: law.id, description: 'Publish approved tariffs on the company website', article: 'Reg. 9', frequency: 'ANNUAL', risk: 'MEDIUM', departmentIds: [fin.id], nextCheckAt: new Date() } });
+  const d = await db.dissemination.create({ data: { subject: 'Reminder: outage reporting duty', body: 'Outages longer than 4 hours must be reported to the regulator within 48 hours.', lawId: law.id, sentById: cmp1, dueAt: new Date(Date.now() + 7 * day) } });
+  await db.disseminationRecipient.createMany({ data: [{ disseminationId: d.id, departmentId: fin.id }, { disseminationId: d.id, departmentId: ops.id }] });
+  await db.licence.create({ data: { name: 'Generation licence — Male', kind: 'LICENCE', regulatorId: ura.id, number: 'URA/GEN/0001', expiresOn: new Date(Date.now() + 75 * day) } });
 }
