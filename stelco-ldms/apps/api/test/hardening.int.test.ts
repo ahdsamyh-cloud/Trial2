@@ -1,5 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { as, closeApp, db, getApp, userId } from './helpers';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { as, closeApp, db, getApp, PDF, userId } from './helpers';
+import { StorageService } from '../src/core/documents/storage.service';
 import { RetentionService } from '../src/core/retention/retention.service';
 import { CryptoService } from '../src/common/crypto.service';
 import { resetConfigForTests } from '../src/config';
@@ -32,6 +33,28 @@ describe('hardening: retention/disposal, key rotation, headers', () => {
     expect(await db.auditLog.count({ where: { action: 'retention.disposed', entityId: a } })).toBe(1);
   });
 
+  it('keeps the record (and reports failure) when files cannot be destroyed', async () => {
+    const uh = await as('uh.drf');
+    const rt = await db.requestType.findUniqueOrThrow({ where: { code: 'LETTER' } });
+    const c = (await uh.post('/drafting/requests', { title: 'Old letter C', requestTypeId: rt.id })).body.id;
+    expect((await uh.upload('/documents', { ownerType: 'matter', ownerId: c, title: 'Letter' }, { file: [{ name: 'c.pdf', data: PDF }] })).status).toBe(201);
+    await sys(db.matter.update({ where: { id: c }, data: { status: 'CLOSED', closedAt: new Date(Date.now() - 9 * 365 * 86400_000) } }));
+    await runAsSystem(() => app.get(RetentionService).scan());
+    const req = await db.disposalRequest.findFirstOrThrow({ where: { recordId: c } });
+    const spy = vi.spyOn(app.get(StorageService), 'remove').mockRejectedValue(new Error('storage offline'));
+    try {
+      const r = await (await as('hod', { reauth: true })).post(`/retention/disposals/${req.id}`, { approve: true });
+      expect(r.status).toBe(503);
+      expect(JSON.stringify(r.body)).not.toContain('storage offline'); // internals never reach the client
+    } finally { spy.mockRestore(); }
+    expect(await sys(db.matter.count({ where: { id: c } }))).toBe(1);
+    expect((await db.disposalRequest.findUniqueOrThrow({ where: { id: req.id } })).status).not.toBe('DISPOSED');
+    expect(await db.auditLog.count({ where: { action: 'retention.dispose.failed', entityId: c } })).toBe(1);
+    // Storage back: approving again completes the disposal.
+    expect((await (await as('hod', { reauth: true })).post(`/retention/disposals/${req.id}`, { approve: true })).status).toBe(200);
+    expect(await sys(db.matter.count({ where: { id: c } }))).toBe(0);
+  });
+
   it('rotates field-level encryption keys', async () => {
     const lo = await as('lo.lit1');
     const c = await (await as('uh.lit')).post('/litigation/cases', { title: 'Rotation test case', caseType: 'CIVIL', ourRole: 'DEFENDANT', exposure: '12345', responsibleOfficerId: await userId('lo.lit1') });
@@ -59,6 +82,7 @@ describe('hardening: retention/disposal, key rotation, headers', () => {
     expect(r.headers['x-content-type-options']).toBe('nosniff');
     expect(r.headers['strict-transport-security']).toContain('max-age=31536000');
     expect(r.headers['x-powered-by']).toBeUndefined();
+    expect(r.headers['x-frame-options']).toBe('DENY');
     expect(JSON.stringify(r.body)).not.toMatch(/at \w+ \(|node_modules|prisma/i);
     const bad = await c.post('/matters', { unit: 'CMP', title: 'x', extraField: 'mass-assignment' });
     expect(bad.status).toBe(400);

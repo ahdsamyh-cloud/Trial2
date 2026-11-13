@@ -1,4 +1,5 @@
 'use client';
+import { UPLOAD_ACCEPT } from '@ldms/shared';
 import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { UNITS, UNIT_NAMES } from '@ldms/shared';
@@ -37,7 +38,7 @@ export default function Portal() {
               <Field label={t('Priority')}>{(id) => <Select id={id} value={f.priority} onChange={(e) => setF({ ...f, priority: e.target.value })} options={['LOW', 'NORMAL', 'HIGH', 'URGENT'].map((p) => ({ value: p, label: p.charAt(0) + p.slice(1).toLowerCase() }))} />}</Field>
               <Field label={t('Needed by')}>{(id) => <Input id={id} type="date" value={f.dueDate} onChange={(e) => setF({ ...f, dueDate: e.target.value })} />}</Field>
             </div>
-            <Field label={t('Attachments')}>{(id) => <input id={id} ref={files} type="file" multiple className="block w-full text-sm" />}</Field>
+            <Field label={t('Attachments')}>{(id) => <input id={id} ref={files} type="file" multiple accept={UPLOAD_ACCEPT} className="block w-full text-sm" />}</Field>
             <Button type="submit" busy={act.busy}>{t('Send to Legal')}</Button>
           </form>
         </Card>

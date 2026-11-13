@@ -5,6 +5,7 @@ Each phase was built, tested and committed separately on branch `ccr-9aa81935-1r
 ## How to run (all phases)
 ```bash
 cd stelco-ldms && pnpm install && pnpm build:shared && pnpm --filter api prisma:generate
+cp infra/.env.dev.example infra/.env   # fill with random values: openssl rand -hex 24
 docker compose -f infra/compose.dev.yml up -d            # or local postgres/redis/clamd
 cp .env.example apps/api/.env  # then fill in dev values (FIELD_KEYS, SIGNING_KEY, DB URLs, SEED_DEMO=true, DEMO_*)
 cd apps/api && DATABASE_URL=$MIGRATION_DATABASE_URL npx prisma migrate deploy && DATABASE_URL=$MIGRATION_DATABASE_URL node scripts/apply-sql.js \
@@ -13,7 +14,7 @@ cd ../web && pnpm build && API_INTERNAL_URL=http://localhost:4000 pnpm start    
 ```
 Demo users all share `DEMO_PASSWORD` and the TOTP secret `DEMO_TOTP_SECRET` (dev only). See `CLAUDE.md`.
 
-Tests: `pnpm test` (unit), `pnpm test:int` (API integration against real PostgreSQL/Redis/ClamAV), `pnpm --filter web test:e2e` (Playwright, needs the API and web running).
+Tests: `pnpm test` (unit), `pnpm test:int` (API integration against real PostgreSQL/Redis/ClamAV; copy `apps/api/.env.test.example` to `apps/api/.env.test` first. Keys and demo credentials are generated per run), `pnpm --filter web test:e2e` (Playwright, needs the API and web running; export the `DEMO_PASSWORD`/`DEMO_TOTP_SECRET` used for seeding).
 
 | Phase | Commit | Built | Tests at end of phase |
 |---|---|---|---|

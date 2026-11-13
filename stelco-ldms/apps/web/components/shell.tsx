@@ -54,6 +54,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   ].filter((n) => n.show);
 
   const logout = async () => {
+    // Deliberately best-effort: if the network call fails we still leave the app. The server-side
+    // session then expires on its own idle timeout (15 min desktop / 5 min mobile).
     await api.post('/auth/logout').catch(() => undefined);
     location.href = '/login';
   };

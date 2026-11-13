@@ -12,12 +12,12 @@ Read `docs/PLAN.md` for the approved architecture and `docs/PHASE-REPORTS.md` fo
 ```bash
 pnpm install
 pnpm build:shared && pnpm --filter api prisma:generate
-# dev services: docker compose -f infra/compose.dev.yml up -d   (or local postgres/redis/clamd)
+# dev services: cp infra/.env.dev.example infra/.env (random values) && docker compose -f infra/compose.dev.yml up -d
 cd apps/api && DATABASE_URL=$MIGRATION_DATABASE_URL npx prisma migrate deploy && DATABASE_URL=$MIGRATION_DATABASE_URL node scripts/apply-sql.js
 cd apps/api && DATABASE_URL=$MIGRATION_DATABASE_URL pnpm seed            # SEED_DEMO=true for demo users
 pnpm dev:api   # :4000      pnpm dev:worker      pnpm dev:web   # :3000
 pnpm test            # unit (shared + api/src)
-pnpm test:int        # API integration (real Postgres ldms_test, Redis db 5, clamd with EICAR sig)
+pnpm test:int        # API integration (real Postgres ldms_test, Redis db 5, clamd with EICAR sig); DB URLs from env or apps/api/.env.test
 pnpm --filter web test:e2e   # Playwright; needs API + web running against a seeded DB
 pnpm typecheck
 ```
@@ -39,7 +39,10 @@ Demo users (dev/test only): password `DEMO_PASSWORD`, all share TOTP secret `DEM
 - Tests: every new resource gets integration tests including IDOR cases (other unit, other department, not-named on restricted).
 
 ## Notes / decisions
-- Prisma 6 (stable) rather than 7; zod 3; Next 15; Node 22 LTS.
+- Prisma 6 (stable) rather than 7; zod 4; Next 15; Node 22 LTS; Vitest 4.
+- **No credentials in the repo**, not even for tests: test keys and demo logins are generated per run (`test/setup-env.ts`, CI "Generate per-run test secrets"); dev compose reads `infra/.env`.
+- Query strings: read with `qs()` / `qrec(query, ['k1','k2'])` (named keys only). Post-login redirects: `safeRedirectPath()` from `@ldms/shared`.
+- pnpm supply-chain settings (`pnpm-workspace.yaml`): 7-day `minimumReleaseAge`, `trustPolicy: no-downgrade`, `blockExoticSubdeps`. The `minimumReleaseAgeExclude` entries are temporary (see comment).
 - TOTP replay protection: a used time-step cannot be reused. Tests that are not about sign-in create sessions directly (`test/helpers.ts → as()`).
 - Field encryption uses a keyring (`FIELD_KEYS=id:key,...`, `FIELD_KEY_ACTIVE`); the `crypto.rotate` job re-encrypts values under old keys.
 - MinIO community edition is in maintenance mode; storage is S3-API-only (`STORAGE_DRIVER=s3`) so the backend is a deployment choice.

@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { CryptoService } from '../../common/crypto.service';
 import { currentUser } from '../../common/context';
-import { conflict, forbidden, notFound } from '../../common/errors';
+import { conflict, DomainError, forbidden, notFound } from '../../common/errors';
 import { PrismaService } from '../../common/prisma.service';
 import { logger } from '../../common/logger';
 import { AuditService } from '../audit/audit.service';
@@ -74,7 +74,23 @@ export class RetentionService implements OnModuleInit {
     if (!m) throw notFound('Record');
     if (m.legalHold || m.documents.some((d) => d.legalHold)) throw conflict('This record is under legal hold and cannot be disposed of');
     const snapshot = { reference: m.reference, title: m.restricted ? '[restricted]' : m.title, unit: m.unit, closedAt: m.closedAt, documents: m.documents.length };
-    for (const d of m.documents) for (const v of d.versions) await this.storage.remove(v.scanStatus === 'CLEAN' ? 'clean' : 'quarantine', v.storageKey).catch(() => undefined);
+    // SECURITY/RECORDS INTEGRITY: previously storage errors were swallowed, so a record could be
+    // marked DISPOSED while its files still existed. Now every failure is logged and audited, and
+    // the register entry is only deleted once ALL files are gone. Deletes are idempotent (missing
+    // objects count as deleted), so the HoD can simply approve again after IT fixes storage.
+    const failed: string[] = [];
+    for (const d of m.documents) for (const v of d.versions) {
+      try {
+        await this.storage.remove(v.scanStatus === 'CLEAN' ? 'clean' : 'quarantine', v.storageKey);
+      } catch (err) {
+        failed.push(v.id);
+        logger.error({ disposalId: id, versionId: v.id, err: String(err).slice(0, 300) }, 'retention: file destruction failed');
+      }
+    }
+    if (failed.length) {
+      await this.audit.log({ action: 'retention.dispose.failed', outcome: 'FAILURE', entityType: 'Matter', entityId: m.id, meta: { failedVersions: failed.length } });
+      throw new DomainError(503, 'Some files could not be destroyed, so the record was kept. Please try again later or contact IT.');
+    }
     await this.prisma.tx(async (tx) => {
       await tx.calendarEvent.deleteMany({ where: { matterId: m.id } });
       await tx.intake.updateMany({ where: { matterId: m.id }, data: { matterId: null } });

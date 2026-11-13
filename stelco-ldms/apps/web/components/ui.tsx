@@ -51,9 +51,13 @@ export function Field({ label, hint, error, children, required, id }: { label: s
 
 /** Full width unless the caller gives a width class (w-40, w-60…). */
 const width = (c?: string) => (c && /(^|\s)(sm:|md:|lg:)?w-/.test(c) ? '' : 'w-full');
-export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, ...p }, ref) => <input ref={ref} className={clsx(fieldCls, width(className), className)} {...p} />);
+// Client-side validation defaults: every text field gets a length cap unless the caller sets one.
+// This is a usability guard only; the API's zod schemas are the security boundary.
+const INPUT_MAX = 2000;
+const TEXTAREA_MAX = 100000;
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, maxLength, ...p }, ref) => <input ref={ref} maxLength={maxLength ?? INPUT_MAX} className={clsx(fieldCls, width(className), className)} {...p} />);
 Input.displayName = 'Input';
-export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...p }, ref) => <textarea ref={ref} className={clsx(fieldCls, 'min-h-[90px]', width(className), className)} {...p} />);
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, maxLength, ...p }, ref) => <textarea ref={ref} maxLength={maxLength ?? TEXTAREA_MAX} className={clsx(fieldCls, 'min-h-[90px]', width(className), className)} {...p} />);
 Textarea.displayName = 'Textarea';
 export function Select({ className, options, placeholder, ...p }: SelectHTMLAttributes<HTMLSelectElement> & { options: { value: string; label: string }[]; placeholder?: string }) {
   return (

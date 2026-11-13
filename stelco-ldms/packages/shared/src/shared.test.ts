@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
+import { safeRedirectPath } from './redirect';
 import {
   addBusinessDays, addBusinessMs, businessMsBetween, isBusinessDay, makeCalendar, toLocalIsoDate, weekdayOfDay, localDayNumber,
   subtractBusinessDays, businessDaysBetween,
@@ -171,5 +172,17 @@ describe('reference + templates + passwords', () => {
     expect(passwordPolicyErrors('correct horse battery')).toEqual([]);
     expect(passwordPolicyErrors('aaaaaaaaaaaaaa')).not.toEqual([]);
     expect(passwordPolicyErrors('jdoe-long-password', { username: 'jdoe' })).not.toEqual([]);
+  });
+});
+
+describe('safeRedirectPath (open-redirect guard)', () => {
+  it('keeps same-origin paths', () => {
+    expect(safeRedirectPath('/matters/abc?tab=docs#x')).toBe('/matters/abc?tab=docs#x');
+    expect(safeRedirectPath('/')).toBe('/');
+  });
+  it('rejects anything that can leave the site', () => {
+    for (const bad of ['//evil.com', '/\\evil.com', '\\\\evil.com', 'https://evil.com', 'javascript:alert(1)', '/\t/evil.com', '/\n/evil.com', ' /x', '', null, undefined]) {
+      expect(safeRedirectPath(bad as string)).toBe('/');
+    }
   });
 });

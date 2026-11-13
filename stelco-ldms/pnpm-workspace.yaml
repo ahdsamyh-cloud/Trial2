@@ -13,3 +13,8 @@ onlyBuiltDependencies:
 blockExoticSubdeps: true
 minimumReleaseAge: 10080
 trustPolicy: no-downgrade
+# Exact versions that were already in the lockfile before minimumReleaseAge was enabled.
+# Remove this list once they are older than 7 days (all after 2026-11-20).
+minimumReleaseAgeExclude:
+  - "rollup@4.68.2"
+  - "@rollup/*" # platform binaries of rollup@4.68.2 (patterns cannot carry a version)

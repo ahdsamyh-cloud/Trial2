@@ -1,4 +1,5 @@
 'use client';
+import { UPLOAD_ACCEPT } from '@ldms/shared';
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
 import { api } from '@/lib/api';
@@ -79,7 +80,7 @@ export default function NewIntake() {
             <Field label={t('Original email reference')} hint={t('Filled from the email Message-ID when you upload one.')}>{(id) => <Input id={id} value={f.emailRef} onChange={set('emailRef')} />}</Field>
             <Field label={t('Priority')}>{(id) => <Select id={id} value={f.priority} onChange={set('priority')} options={['LOW', 'NORMAL', 'HIGH', 'URGENT'].map((p) => ({ value: p, label: t(p.charAt(0) + p.slice(1).toLowerCase()) }))} />}</Field>
             <Field label={t('Requested due date')}>{(id) => <Input id={id} type="date" value={f.dueDate} onChange={set('dueDate')} />}</Field>
-            <Field label={t('Other attachments')}>{(id) => <input id={id} ref={attRef} type="file" multiple className="block w-full text-sm" />}</Field>
+            <Field label={t('Other attachments')}>{(id) => <input id={id} ref={attRef} type="file" multiple accept={UPLOAD_ACCEPT} className="block w-full text-sm" />}</Field>
             <div className="flex justify-end gap-2 sm:col-span-2">
               <Button type="button" variant="secondary" onClick={() => router.back()}>{t('Cancel')}</Button>
               <Button type="submit" busy={act.busy}>{t('Save intake')}</Button>

@@ -3,7 +3,8 @@ import type { Response } from 'express';
 import { z } from 'zod';
 import { UNITS } from '@ldms/shared';
 import { Authenticated, Can, ReAuth } from '../../common/decorators';
-import { forbidden } from '../../common/errors';
+import { DomainError, forbidden } from '../../common/errors';
+import { logger } from '../../common/logger';
 import { PrismaService } from '../../common/prisma.service';
 import { pageQuery, parse, qs } from '../../common/zod';
 import { ExportService } from '../export/export.service';
@@ -78,7 +79,12 @@ export class MattersController {
     const results = [];
     for (const id of b.matterIds) {
       try { await this.matters.assign(id, { assigneeIds: [b.assigneeId] }); results.push({ id, ok: true }); }
-      catch (e) { results.push({ id, ok: false, error: (e as Error).message }); }
+      catch (e) {
+        // SECURITY: only user-facing DomainError messages are returned. Anything else (DB/driver
+        // errors) is logged server-side and replaced by a generic message, so internals never leak.
+        if (e instanceof DomainError) results.push({ id, ok: false, error: e.message });
+        else { logger.error({ matterId: id, err: String(e).slice(0, 300) }, 'bulk assign failed'); results.push({ id, ok: false, error: 'Could not assign this matter' }); }
+      }
     }
     return { results };
   }

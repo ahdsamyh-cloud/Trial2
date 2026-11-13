@@ -6,7 +6,7 @@ A secure, on-premises web app for STELCO's Legal Department, covering Litigation
 |---|---|
 | [`docs/PLAN.md`](docs/PLAN.md) | Architecture, data model, permissions, workflows, threat model |
 | [`docs/PHASE-REPORTS.md`](docs/PHASE-REPORTS.md) | What each phase delivered, how to run, test results, open issues |
-| [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/ASVS-L2-CHECKLIST.md`](docs/ASVS-L2-CHECKLIST.md) | Security controls and the pen-test checklist |
+| [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/ASVS-L2-CHECKLIST.md`](docs/ASVS-L2-CHECKLIST.md) · [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md) | Security controls, the pen-test checklist, and the pre-go-live audit |
 | [`docs/IT_SETUP.md`](docs/IT_SETUP.md) · [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Installing, operating, backups, incidents, go-live |
 | [`docs/user-guide/`](docs/user-guide/README.md) | User guides per role |
 | [`CLAUDE.md`](CLAUDE.md) | Conventions and commands for developers |

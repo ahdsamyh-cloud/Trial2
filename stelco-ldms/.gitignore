@@ -4,8 +4,9 @@ dist/
 coverage/
 .env
 .env.*
-!.env.ci
+!.env.test.example
 !.env.example
+!.env.dev.example
 *.log
 playwright-report/
 test-results/

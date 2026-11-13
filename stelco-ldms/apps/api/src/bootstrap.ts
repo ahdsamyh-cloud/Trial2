@@ -18,6 +18,8 @@ export async function createApp(): Promise<INestApplication> {
     hsts: { maxAge: 31536000, includeSubDomains: true },
     referrerPolicy: { policy: 'no-referrer' },
     crossOriginResourcePolicy: { policy: 'same-origin' },
+    // Match the web pages (DENY + CSP frame-ancestors 'none'): API responses are never framed.
+    xFrameOptions: { action: 'deny' },
   }));
   app.use((_req: express.Request, res: express.Response, next: express.NextFunction) => {
     res.setHeader('Cache-Control', 'no-store');

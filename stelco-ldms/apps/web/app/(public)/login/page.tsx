@@ -1,4 +1,5 @@
 'use client';
+import { safeRedirectPath } from '@ldms/shared';
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api';
@@ -22,7 +23,8 @@ function LoginInner() {
   const [mustChange, setMustChange] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const next = params.get('next') && params.get('next')!.startsWith('/') && !params.get('next')!.startsWith('//') ? params.get('next')! : '/';
+  // SECURITY: validated with safeRedirectPath (blocks `//host`, `/\host`, control chars, other origins) to prevent open redirects.
+  const next = safeRedirectPath(params.get('next'));
 
   useEffect(() => {
     api.get<{ stage: string; mustChangePassword: boolean }>('/auth/me').then((me) => {

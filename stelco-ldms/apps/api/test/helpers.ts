@@ -62,6 +62,7 @@ export class Client {
 }
 
 export const TOTP_SECRET = process.env.DEMO_TOTP_SECRET!;
+export const DEMO_PASSWORD = process.env.DEMO_PASSWORD!;
 export function totp(offsetSteps = 0, secret = TOTP_SECRET) {
   return authenticator.clone({ epoch: Date.now() + offsetSteps * 30_000 }).generate(secret);
 }

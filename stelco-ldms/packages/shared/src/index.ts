@@ -4,3 +4,5 @@ export * from './permissions';
 export * from './workflows';
 export * from './reference';
 export * from './password';
+export * from './redirect';
+export * from './uploads';

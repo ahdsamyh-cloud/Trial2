@@ -1,4 +1,5 @@
 'use client';
+import { UPLOAD_ACCEPT } from '@ldms/shared';
 import { useRef, useState } from 'react';
 import { api, downloadVersion } from '@/lib/api';
 import { useApi, useAction } from '@/lib/hooks';
@@ -86,7 +87,7 @@ export function DocumentsPanel({ ownerType, ownerId, canWrite = true, docTypes, 
       <Modal open={!!open} title={open?.documentId ? t('Upload a new version') : t('Upload a document')} onClose={() => setOpen(null)}
         footer={<><Button variant="secondary" onClick={() => setOpen(null)}>{t('Cancel')}</Button><Button busy={act.busy} onClick={upload}>{t('Upload')}</Button></>}>
         {act.error ? <Alert>{act.error}</Alert> : null}
-        <Field label={t('File')} hint={t('PDF, Word, Excel, PowerPoint, Outlook email, images or text. Files are virus-scanned before anyone can open them.')}>{(id) => <input id={id} ref={fileRef} type="file" className="block w-full text-sm" accept=".pdf,.docx,.xlsx,.pptx,.doc,.xls,.ppt,.msg,.eml,.png,.jpg,.jpeg,.txt,.csv" />}</Field>
+        <Field label={t('File')} hint={t('PDF, Word, Excel, PowerPoint, Outlook email, images or text. Files are virus-scanned before anyone can open them.')}>{(id) => <input id={id} ref={fileRef} type="file" className="block w-full text-sm" accept={UPLOAD_ACCEPT} />}</Field>
         {!open?.documentId ? <Field label={t('Title')}>{(id) => <Input id={id} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />}</Field> : null}
         {docTypes && !open?.documentId ? <Field label={t('Document type')}>{(id) => <Select id={id} placeholder={t('—')} options={docTypes} value={form.docTypeCode} onChange={(e) => setForm({ ...form, docTypeCode: e.target.value })} />}</Field> : null}
         {stages ? <Field label={t('Stage')}>{(id) => <Select id={id} placeholder={t('—')} options={stages.map((s) => ({ value: s, label: label(s) }))} value={form.stageLabel} onChange={(e) => setForm({ ...form, stageLabel: e.target.value })} />}</Field> : null}

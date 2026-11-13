@@ -1,4 +1,5 @@
 'use client';
+import { uploadProblem } from '@ldms/shared';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public details?: unknown, public requestId?: string) {
@@ -22,7 +23,19 @@ export function onReauthRequired(h: ReauthHandler | null) {
 
 async function request<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
   const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
-  const res = await fetch(`/api${path}`, {
+  // Client-side validation (UX only; the server re-validates everything): reject disallowed,
+  // empty or oversized files before uploading megabytes that the API would refuse anyway.
+  if (isForm) {
+    for (const v of (body as FormData).values()) {
+      if (typeof File !== 'undefined' && v instanceof File) {
+        const problem = uploadProblem(v.name, v.size);
+        if (problem) throw new ApiError(400, problem);
+      }
+    }
+  }
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, {
     method,
     credentials: 'same-origin',
     headers: {
@@ -32,7 +45,11 @@ async function request<T>(method: string, path: string, body?: unknown, retry = 
     },
     body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
     cache: 'no-store',
-  });
+    });
+  } catch {
+    // Network failure (offline, VPN dropped): friendly message instead of a raw TypeError.
+    throw new ApiError(0, 'Could not reach the server. Check your connection and try again.');
+  }
   if (res.status === 204) return undefined as T;
   const ct = res.headers.get('content-type') ?? '';
   const data = ct.includes('application/json') ? await res.json() : await res.text();

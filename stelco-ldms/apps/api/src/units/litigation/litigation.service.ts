@@ -4,6 +4,7 @@ import { addBusinessDays, canMove, LITIGATION_OPEN, LITIGATION_TRANSITIONS, Liti
 import { CryptoService } from '../../common/crypto.service';
 import { currentUser } from '../../common/context';
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors';
+import { logger } from '../../common/logger';
 import { PrismaService, Tx } from '../../common/prisma.service';
 import { AuditService } from '../../core/audit/audit.service';
 import { CalendarService } from '../../core/calendar/calendar.service';
@@ -196,7 +197,8 @@ export class LitigationService implements OnModuleInit {
       await this.matters.recordTransition(tx, id, from, to, 'lit-status', comment);
       await tx.litigationCase.update({ where: { matterId: id }, data: { lastUpdateAt: new Date() } });
     });
-    if (to === 'CLOSED') await this.calendar.cancel('CaseDeadline', id).catch(() => undefined);
+    // A stale calendar entry is not worth failing a committed status change for, but it must not vanish silently.
+    if (to === 'CLOSED') await this.calendar.cancel('CaseDeadline', id).catch((err) => logger.warn({ matterId: id, err: String(err).slice(0, 200) }, 'litigation: could not cancel deadline calendar events'));
     return this.get(id);
   }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { sniff, FileRejected, cleanFilename } from './core/documents/filetype';
+import { sniff, FileRejected, cleanFilename, ALLOWED } from './core/documents/filetype';
+import { UPLOAD_EXTENSIONS } from '@ldms/shared';
 import { sanitizeEmailHtml } from './core/intake/email-parser';
 import { CryptoService } from './common/crypto.service';
 import { canonicalize } from './core/audit/audit.service';
@@ -103,5 +104,11 @@ describe('query record helper', () => {
     expect(q).toEqual({ status: 'OPEN', constructor: 'y' });
     expect(({} as Record<string, unknown>).x).toBeUndefined();
     expect(() => qrec({ a: ['1', '2'] }, ['a'])).toThrow();
+  });
+});
+
+describe('upload allow-list', () => {
+  it('browser list matches the server list exactly', () => {
+    expect([...UPLOAD_EXTENSIONS].sort()).toEqual(Object.keys(ALLOWED).sort());
   });
 });

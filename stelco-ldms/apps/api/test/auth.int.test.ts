@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { as, Client, closeApp, db, getApp, totp } from './helpers';
+import { as, Client, closeApp, db, DEMO_PASSWORD, getApp, totp } from './helpers';
 import { authenticator } from 'otplib';
 
 describe('authentication (local accounts + mandatory TOTP)', () => {
@@ -19,7 +19,7 @@ describe('authentication (local accounts + mandatory TOTP)', () => {
 
   it('requires a second factor before any protected route', async () => {
     const c = new Client(app);
-    const r = await c.post('/auth/login', { username: 'uh.awr', password: 'Demo-Passphrase-2026' });
+    const r = await c.post('/auth/login', { username: 'uh.awr', password: DEMO_PASSWORD });
     expect(r.status).toBe(200);
     expect(r.body.next).toBe('MFA');
     expect((await c.get('/matters')).status).toBe(401);
@@ -31,7 +31,7 @@ describe('authentication (local accounts + mandatory TOTP)', () => {
     expect((await c.get('/matters')).status).toBe(200);
     // the same TOTP code cannot be used again
     const c2 = new Client(app);
-    await c2.post('/auth/login', { username: 'uh.awr', password: 'Demo-Passphrase-2026' });
+    await c2.post('/auth/login', { username: 'uh.awr', password: DEMO_PASSWORD });
     expect((await c2.post('/auth/mfa', { code: totp() })).status).toBe(401);
   });
 
@@ -40,7 +40,7 @@ describe('authentication (local accounts + mandatory TOTP)', () => {
     for (let i = 0; i < 5; i++) await c.post('/auth/login', { username: 'lo.awr1', password: 'not-the-password' });
     const u = await db.user.findUniqueOrThrow({ where: { username: 'lo.awr1' } });
     expect(u.lockedUntil!.getTime()).toBeGreaterThan(Date.now() + 14 * 60_000);
-    const r = await c.post('/auth/login', { username: 'lo.awr1', password: 'Demo-Passphrase-2026' });
+    const r = await c.post('/auth/login', { username: 'lo.awr1', password: DEMO_PASSWORD });
     expect(r.status).toBe(401);
     await db.user.update({ where: { id: u.id }, data: { lockedUntil: null } });
   });

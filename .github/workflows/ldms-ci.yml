@@ -12,11 +12,7 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     services:
-      postgres:
-        image: postgres:17-alpine
-        env: { POSTGRES_USER: ldms_owner, POSTGRES_PASSWORD: dev_owner_pw, POSTGRES_DB: ldms_test }
-        ports: ["5432:5432"]
-        options: --health-cmd pg_isready --health-interval 5s --health-retries 20
+      # Postgres is started in a step instead (below) so its passwords can be random per run.
       redis:
         image: redis:7.4-alpine
         ports: ["6379:6379"]
@@ -31,7 +27,29 @@ jobs:
         with: { node-version: 22, cache: pnpm, cache-dependency-path: stelco-ldms/pnpm-lock.yaml }
       - run: sudo apt-get update && sudo apt-get install -y poppler-utils tesseract-ocr postgresql-client
       - run: pnpm install --frozen-lockfile
-      - run: PGPASSWORD=dev_owner_pw psql -h localhost -U ldms_owner -d ldms_test -c "CREATE ROLE ldms_app LOGIN PASSWORD 'dev_app_pw'; ALTER ROLE ldms_owner CREATEDB;"
+      # SECURITY: no credentials in the repository. Every DB password, demo login, TOTP secret and
+      # key used by the test run is generated here, masked in logs, and lives only for this job.
+      - name: Generate per-run test secrets
+        run: |
+          PG_OWNER=$(openssl rand -hex 24); PG_APP=$(openssl rand -hex 24)
+          DEMO_PASSWORD="ci-$(openssl rand -hex 16)"
+          DEMO_TOTP_SECRET=$(head -c 20 /dev/urandom | base32 | tr -d '=\n')
+          K1=$(openssl rand -base64 32); K0=$(openssl rand -base64 32); SIGNING_KEY=$(openssl rand -base64 48 | tr -d '\n')
+          for v in "$PG_OWNER" "$PG_APP" "$DEMO_PASSWORD" "$DEMO_TOTP_SECRET" "$K1" "$K0" "$SIGNING_KEY"; do echo "::add-mask::$v"; done
+          {
+            echo "PG_OWNER=$PG_OWNER"; echo "PG_APP=$PG_APP"
+            echo "DATABASE_URL=postgresql://ldms_app:$PG_APP@localhost:5432/ldms_test"
+            echo "MIGRATION_DATABASE_URL=postgresql://ldms_owner:$PG_OWNER@localhost:5432/ldms_test"
+            echo "DEMO_PASSWORD=$DEMO_PASSWORD"; echo "DEMO_TOTP_SECRET=$DEMO_TOTP_SECRET"
+            echo "FIELD_KEYS=k1:$K1,k0:$K0"; echo "FIELD_KEY_ACTIVE=k1"; echo "SIGNING_KEY=$SIGNING_KEY"
+          } >> "$GITHUB_ENV"
+      - name: Start Postgres
+        run: |
+          docker run -d --name pg -p 5432:5432 -e POSTGRES_USER=ldms_owner -e POSTGRES_PASSWORD="$PG_OWNER" -e POSTGRES_DB=ldms_test postgres:17-alpine
+          for i in $(seq 1 30); do docker exec pg pg_isready -U ldms_owner -d ldms_test && break; sleep 2; done
+          # psql variables (:'app_pw') quote the password safely; they only expand in script input, hence stdin.
+          printf "%s\n" "CREATE ROLE ldms_app LOGIN PASSWORD :'app_pw';" "ALTER ROLE ldms_owner CREATEDB;" |
+            PGPASSWORD="$PG_OWNER" psql -h localhost -U ldms_owner -d ldms_test -v ON_ERROR_STOP=1 -v app_pw="$PG_APP"
       - run: pnpm build:shared && pnpm --filter api prisma:generate
       - run: pnpm typecheck
       - run: pnpm test
@@ -41,10 +59,9 @@ jobs:
       - name: Build
         run: pnpm --filter api build && pnpm --filter web build
       - name: E2E (Playwright)
-        env: { DEMO_PASSWORD: Demo-Passphrase-2026, DEMO_TOTP_SECRET: JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP }
+        env: { NODE_ENV: development, APP_ORIGIN: "http://localhost:3000", STORAGE_FS_ROOT: /tmp/ldms-ci, QUEUE_INLINE: "true", SEED_DEMO: "true" }
         run: |
           npx --yes playwright@1.63.0 install --with-deps chromium
-          export $(grep -v '^#' apps/api/.env.ci | xargs)
           (cd apps/api && DATABASE_URL=$MIGRATION_DATABASE_URL npx prisma migrate deploy && DATABASE_URL=$MIGRATION_DATABASE_URL node scripts/apply-sql.js && DATABASE_URL=$MIGRATION_DATABASE_URL node -r @swc-node/register prisma/seed.ts)
           (cd apps/api && node dist/main.js &) ; (cd apps/web && API_INTERNAL_URL=http://localhost:4000 npx next start -p 3000 &)
           sleep 8 && pnpm --filter web test:e2e
