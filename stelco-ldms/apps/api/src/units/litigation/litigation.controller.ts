@@ -21,7 +21,7 @@ const caseSchema = z.object({
   status: z.enum(LITIGATION_STATUSES).default('PRE_LITIGATION'),
   parties: z.array(z.object({ name: z.string().trim().min(1).max(300), side: z.enum(['PLAINTIFF', 'DEFENDANT', 'THIRD_PARTY', 'OURS', 'OPPOSING', 'OTHER']), counsel: z.string().max(300).nullish() }).strict()).max(30).default([]),
 }).strict();
-const fieldMap = z.record(z.enum(Object.keys(LIT_FIELDS) as [string, ...string[]]), z.string().max(200)).transform((v) => Object.fromEntries(Object.entries(v).filter(([, c]) => c)));
+const fieldMap = z.partialRecord(z.enum(Object.keys(LIT_FIELDS) as [string, ...string[]]), z.string().max(200)).transform((v) => Object.fromEntries(Object.entries(v).filter(([, c]) => c)));
 
 @Controller('litigation')
 export class LitigationController {

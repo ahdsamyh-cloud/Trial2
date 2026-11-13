@@ -27,3 +27,14 @@ test('management viewer sees only the aggregated overview', async ({ page }) => 
   await expect(page.getByText('Open — confidential')).toBeVisible();
   expect((await page.request.get('/api/matters')).status()).toBe(403);
 });
+
+test('main pages pass automated accessibility checks (WCAG 2.1 A/AA)', async ({ page }) => {
+  const AxeBuilder = (await import('@axe-core/playwright')).default;
+  await login(page, 'uh.lit');
+  for (const path of ['/', '/matters', '/litigation', '/intake', '/calendar', '/account']) {
+    await page.goto(path);
+    await page.locator('main#main h1').first().waitFor();
+    const r = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+    expect(r.violations.map((v) => `${path}: ${v.id} (${v.nodes.length})`)).toEqual([]);
+  }
+});

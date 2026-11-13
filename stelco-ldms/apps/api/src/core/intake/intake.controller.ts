@@ -30,7 +30,7 @@ const portalSchema = z.object({
 const convertSchema = z.object({
   unit: z.enum(UNITS), requestTypeId: z.string().max(40).nullish(), title: z.string().trim().min(3).max(300).optional(), priority: priority.optional(),
   dueDate: z.coerce.date().nullish(), restricted: z.boolean().default(false), assigneeIds: z.array(z.string().max(40)).max(5).optional(),
-  extra: z.record(z.unknown()).optional(),
+  extra: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 
 const files = () => FileFieldsInterceptor([{ name: 'email', maxCount: 1 }, { name: 'attachments', maxCount: 10 }], { limits: { fileSize: Number(process.env.MAX_UPLOAD_MB ?? 50) * 1024 * 1024 } });

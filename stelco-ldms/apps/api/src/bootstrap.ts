@@ -27,6 +27,12 @@ export async function createApp(): Promise<INestApplication> {
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: false, limit: '1mb' }));
   app.use(cookieParser());
+  // Body-parser errors happen before Nest: answer them generically (no internals).
+  app.use((err: { type?: string; status?: number }, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err?.type === 'entity.too.large') { res.status(413).json({ message: 'The request is too large' }); return; }
+    if (err?.type === 'entity.parse.failed' || err?.type === 'encoding.unsupported') { res.status(400).json({ message: 'The request body is not valid' }); return; }
+    next(err);
+  });
   app.setGlobalPrefix('api');
   app.enableShutdownHooks();
   return app;

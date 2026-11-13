@@ -14,6 +14,7 @@ process.env.QUEUE_INLINE = 'true';
 process.env.SMTP_ENABLED = 'false';
 process.env.LOGIN_DELAY_BASE_MS = '0';
 process.env.RATE_LIMIT_PER_MIN = '100000';
+process.env.RATE_LIMIT_IP_PER_MIN = '1000000';
 process.env.SEED_DEMO = 'true';
 process.env.DEMO_PASSWORD = 'Demo-Passphrase-2026';
 process.env.DEMO_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';

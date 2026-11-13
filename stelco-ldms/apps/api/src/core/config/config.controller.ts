@@ -73,7 +73,7 @@ export class ConfigController {
   @AdminNetwork()
   async update(@Param('entity') name: string, @Param('id') id: string, @Body() body: unknown) {
     const e = this.entity(name);
-    const data = parse((e.schema as z.AnyZodObject).partial(), body);
+    const data = parse((e.schema as z.ZodObject).partial(), body);
     const before = await this.delegate(e.model).findUnique({ where: { id } });
     if (!before) throw notFound();
     const row = await this.delegate(e.model).update({ where: { id }, data });

@@ -26,6 +26,8 @@ import { ReportsController } from './reports/reports.controller';
 import { ReportsService } from './reports/reports.service';
 import { ImportsController } from './imports/imports.controller';
 import { ImportsService } from './imports/imports.service';
+import { RetentionController } from './retention/retention.controller';
+import { RetentionService } from './retention/retention.service';
 import { IntakeController, PortalController } from './intake/intake.controller';
 import { IntakeService } from './intake/intake.service';
 import { JobsService } from './jobs/jobs.service';
@@ -43,14 +45,14 @@ import { UsersService } from './users/users.service';
 const providers = [
   PrismaService, CryptoService, AuditService, AuthService, SessionService, AuthGuard, CalendarService, SettingsService, AvService,
   DocumentsService, ExtractService, StorageService, ExportService, IntakeService, JobsService, MattersService, ReferenceService,
-  NotificationsService, SecurityAlerts, PolicyService, SlaService, UsersService, DashboardService, SearchService, ReportsService, ImportsService,
+  NotificationsService, SecurityAlerts, PolicyService, SlaService, UsersService, DashboardService, SearchService, ReportsService, ImportsService, RetentionService,
 ];
 
 @Global()
 @Module({
   controllers: [
     HealthController, AuthController, UsersController, AuditController, ConfigController, NotificationsController, DocumentsController,
-    CalendarController, IntakeController, PortalController, MattersController, MyWorkController, DashboardController, SearchController, ReportsController, ImportsController,
+    CalendarController, IntakeController, PortalController, MattersController, MyWorkController, DashboardController, SearchController, ReportsController, ImportsController, RetentionController,
   ],
   providers,
   exports: providers,

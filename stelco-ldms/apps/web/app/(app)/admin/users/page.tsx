@@ -25,6 +25,8 @@ export default function UsersAdmin() {
   const [result, setResult] = useState<string | null>(null);
   const [work, setWork] = useState<{ total: number; assignments: { role: string; count: number }[] } | null>(null);
   const [reason, setReason] = useState('');
+  const [leaver, setLeaver] = useState<U | null>(null);
+  const [toUser, setToUser] = useState('');
   const act = useAction();
 
   const RoleEditor = () => (
@@ -50,7 +52,7 @@ export default function UsersAdmin() {
       {act.error ? <Alert>{act.error}</Alert> : null}
       {result ? <Alert tone="amber">{result}</Alert> : null}
       <Input aria-label={t('Search')} className="mb-3 w-72" placeholder={t('Search name, username, email')} value={q} onChange={(e) => setQ(e.target.value)} />
-      <DataTable id="users" rows={data} loading={loading} total={data?.length} onRowClick={manage ? (u) => { setEdit(u); setRoles(u.roles.map((r) => ({ role: r.role, unit: r.unit }))); setWork(null); setReason(''); } : undefined}
+      <DataTable id="users" rows={data} loading={loading} total={data?.length} onRowClick={manage ? (u) => { setEdit(u); setRoles(u.roles.map((r) => ({ role: r.role, unit: r.unit }))); setWork(null); setReason(''); } : can('leaver:reassign') ? (u) => { setLeaver(u); setToUser(''); act.run(async () => setWork(await api.get(`/users/${u.id}/open-work`))); } : undefined}
         columns={[
           { key: 'displayName', header: t('Name'), render: (u) => <><div className="font-medium">{u.displayName}</div><div className="text-xs text-slate-500">{u.username}</div></> },
           { key: 'department', header: t('Department'), render: (u) => u.department?.name ?? '—', hideOnMobile: true },
@@ -102,6 +104,12 @@ export default function UsersAdmin() {
             ) : null}
           </div>
         ) : null}
+      </Modal>
+      <Modal open={!!leaver} title={t('Leaver: reassign open work of {name}', { name: leaver?.displayName ?? '' })} onClose={() => setLeaver(null)}
+        footer={<Button busy={act.busy} disabled={!toUser} onClick={() => act.run(async () => { const r = await api.post<{ moved: number; remaining: number }>(`/users/${leaver!.id}/reassign`, { toUserId: toUser }); setResult(t('{n} assignment(s) moved. {r} remaining (outside your units).', { n: r.moved, r: r.remaining })); setLeaver(null); })}>{t('Reassign')}</Button>}>
+        {act.error ? <Alert>{act.error}</Alert> : null}
+        <p className="text-sm">{t('Open assignments: {n}', { n: work?.total ?? '…' })}</p>
+        <Field label={t('Move to')}>{(id) => <Select id={id} placeholder={t('— Select —')} value={toUser} onChange={(e) => setToUser(e.target.value)} options={(data ?? []).filter((u) => u.id !== leaver?.id && u.status === 'ACTIVE' && !u.isAdminAccount).map((u) => ({ value: u.id, label: u.displayName }))} />}</Field>
       </Modal>
     </div>
   );

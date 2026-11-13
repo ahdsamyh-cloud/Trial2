@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ReactNode, useEffect, useState } from 'react';
-import { Bell, BookOpen, Calendar, ClipboardCheck, FileText, Gavel, GraduationCap, Home, Inbox, LayoutDashboard, LogOut, Menu, Search, Settings, Shield, Users, X, Briefcase, Send, Upload } from 'lucide-react';
+import { Bell, BookOpen, Calendar, ClipboardCheck, FileText, Gavel, GraduationCap, Home, Inbox, LayoutDashboard, LogOut, Menu, Search, Settings, Shield, Users, X, Briefcase, Send, Upload, Archive } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { t } from '@/lib/i18n';
@@ -49,6 +49,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     { href: '/admin/imports', label: t('Data import'), icon: <Upload size={18} />, show: can('lit:import') || can('draft:draft', 'DRF') || can('cmp:write', 'CMP') || can('awr:write', 'AWR') },
     { href: '/admin/users', label: t('Users'), icon: <Users size={18} />, show: can('users:read') || can('users:manage') },
     { href: '/admin/config', label: t('Configuration'), icon: <Settings size={18} />, show: can('config:read') && (can('config:manage') || legal) },
+    { href: '/admin/retention', label: t('Retention'), icon: <Archive size={18} />, show: can('disposal:approve') },
     { href: '/admin/audit', label: t('Audit log'), icon: <Shield size={18} />, show: can('audit:read') || can('audit:read.system') },
   ].filter((n) => n.show);
 

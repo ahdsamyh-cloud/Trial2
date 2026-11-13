@@ -13,7 +13,7 @@ RUN pnpm install --frozen-lockfile --filter api... --filter @ldms/shared
 COPY packages/shared packages/shared
 COPY apps/api apps/api
 RUN pnpm --filter @ldms/shared build && pnpm --filter api prisma:generate && pnpm --filter api build \
- && pnpm --filter api deploy --prod --legacy /out && cp -r apps/api/dist apps/api/prisma apps/api/data apps/api/scripts /out/ \
+ && pnpm --filter api deploy --prod --legacy /out && cp -r apps/api/dist apps/api/dist-tools apps/api/prisma apps/api/data apps/api/scripts /out/ \
  && cd /out && npx prisma generate --schema prisma/schema.prisma
 
 FROM node:22.20-bookworm-slim AS api

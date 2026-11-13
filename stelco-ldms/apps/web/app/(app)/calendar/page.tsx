@@ -49,10 +49,10 @@ export default function CalendarPage() {
       </div>
       {view === 'month' ? (
         <div className="hidden overflow-hidden rounded-lg border bg-white md:block">
-          <div className="grid grid-cols-7 border-b bg-slate-50 text-center text-xs font-semibold text-slate-600">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className={`py-1.5 ${d === 'Fri' || d === 'Sat' ? 'text-slate-400' : ''}`}>{t(d)}</div>)}</div>
+          <div className="grid grid-cols-7 border-b bg-slate-50 text-center text-xs font-semibold text-slate-600">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className={`py-1.5 ${d === 'Fri' || d === 'Sat' ? 'text-slate-500' : ''}`}>{t(d)}</div>)}</div>
           <div className="grid grid-cols-7">{days.map((d, i) => (
             <div key={i} className={`min-h-[96px] border-b border-r p-1 ${d && localDay(new Date()) === d ? 'bg-brand-50' : ''} ${i % 7 >= 5 ? 'bg-slate-50' : ''}`}>
-              {d ? <><div className="text-right text-xs text-slate-500">{Number(d.slice(8))}</div>
+              {d ? <><div className="text-right text-xs text-slate-600">{Number(d.slice(8))}</div>
                 <ul className="space-y-0.5">{byDay(d).slice(0, 4).map((e) => <li key={e.id}><Link href={link(e)} className="block truncate rounded px-1 text-[11px] hover:underline" title={e.title}><Badge tone={TONE[e.kind] ?? 'gray'}>{label(e.kind).slice(0, 10)}</Badge> {e.title}</Link></li>)}
                   {byDay(d).length > 4 ? <li className="text-[11px] text-slate-500">+{byDay(d).length - 4} {t('more')}</li> : null}</ul></> : null}
             </div>

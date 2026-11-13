@@ -6,6 +6,17 @@
 | Scope of this document | Architecture, data model (ERD), roles and permissions, workflow state machines, STRIDE threat model, phased delivery plan, open questions. |
 | Date | 2026-11-12 |
 
+
+> **Implementation status (2026-11-13):** Phases 0–7 are built (see [`PHASE-REPORTS.md`](PHASE-REPORTS.md)). Phase 8 is not started, as agreed.
+> Changes from this plan made during the build, with reasons:
+> * **Gotenberg dropped.** PDF reports are generated with `pdf-lib`, and OCR uses `pdftoppm` + Tesseract instead of `ocrmypdf`, which had a broken native dependency. Legacy `.doc/.xls/.ppt` are stored and scanned but not text-indexed.
+> * **Testcontainers not used.** Integration tests run against real PostgreSQL/Redis/ClamAV services (local or CI service containers).
+> * **i18n** uses a gettext-style `t()` with an extracted catalogue (`messages/en.json`) instead of next-intl. Same goal, simpler.
+> * **Prisma 6, zod 4, Next 15, Node 22 LTS.** The Prisma schema lives in `apps/api/prisma`, not a separate `packages/db`.
+> * **Field encryption** uses a key ring with per-value key IDs and a re-encryption job, rather than per-record data keys.
+> * **Rate limits** are per session, with a per-IP ceiling (a pure per-IP limit would throttle a whole office behind NAT).
+> * **Backups** need a `BYPASSRLS` read-only role (`ldms_backup`), because `pg_dump` cannot export FORCE-RLS tables otherwise.
+
 Contents
 
 1. [Summary of key decisions](#1-summary-of-key-decisions)

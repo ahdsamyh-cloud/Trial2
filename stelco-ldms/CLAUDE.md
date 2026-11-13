@@ -1,6 +1,6 @@
 # CLAUDE.md — STELCO Legal Department Management System (LDMS)
 
-Read `docs/PLAN.md` for the approved architecture. This file holds conventions, commands and notes that keep the code consistent.
+Read `docs/PLAN.md` for the approved architecture and `docs/PHASE-REPORTS.md` for status (Phases 0–7 done; Phase 8 only on request). This file holds conventions, commands and notes that keep the code consistent.
 
 ## Layout (pnpm workspace in `stelco-ldms/`)
 - `packages/shared` — pure TS used by API and web: business-day calendar (`calendar.ts`), SLA maths (`sla.ts`), role→permission matrix (`permissions.ts`), workflow tables (`workflows.ts`), reference numbers, password policy. Build with `pnpm build:shared` before running API tests.
@@ -57,3 +57,6 @@ Demo users (dev/test only): password `DEMO_PASSWORD`, all share TOTP secret `DEM
 - **Cross-cutting** (`src/core/{dashboard,search,reports,imports}`): HoD/unit dashboard (scoped; unit heads limited to their units), management dashboard (`runAsSystem`, aggregates only, restricted matters → "confidential" count), global search (FTS candidates fetched inside `prisma.tx` so RLS context applies, then re-filtered via `PolicyService` / `DocumentsService.assertDocRead`; snippets use «» markers, rendered without innerHTML), management report (monthly/annual → JSON/xlsx/PDF via pdf-lib), contracts/laws importers (dry run → commit), bulk reminders.
 - OCR: `pdftoppm` → `tesseract` per page (no ocrmypdf/pikepdf). PDF reports via `pdf-lib`; Gotenberg was dropped (legacy .doc/.xls are stored and scanned but not text-indexed).
 - `$queryRaw` on `prisma.db` does NOT get RLS context (the extension only wraps model operations) — run raw SQL inside `prisma.tx(...)`.
+- **Retention / keys** (`src/core/retention`): weekly `retention.scan` proposes `DisposalRequest`s (legal hold excluded); HoD approves with re-auth → files destroyed, record deleted, audit snapshot kept. `crypto.rotate` re-encrypts `*Enc` fields under the active key.
+- **Ops tools** (compiled to `dist-tools/` by `pnpm --filter api build`): `prisma/seed.js`, `scripts/create-admin.js` (first Super Admin), `scripts/verify-restore.js`. Backups: `infra/backup/{backup,restore}.sh` (needs the `ldms_backup` BYPASSRLS role).
+- i18n: run `pnpm --filter web i18n:extract` after adding UI strings.
