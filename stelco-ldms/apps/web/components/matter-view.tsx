@@ -57,7 +57,7 @@ export function MatterView({ id, children, actions, docStages, docTypes, extraIn
         actions={m.portalView ? null : <>
           {actions?.(m, reload)}
           {generic && canWrite ? <Button variant="secondary" onClick={() => { setStatus({ status: m.status, comment: '' }); setDlg('status'); }}>{t('Change status')}</Button> : null}
-          {canAssign ? <Button variant="secondary" onClick={() => { setAssign({ assignee: assignees[0]?.user.id ?? '', reviewer: reviewer?.user.id ?? '' }); setDlg('assign'); }}>{t('Assign')}</Button> : null}
+          {canAssign && m.unit !== 'DRF' ? <Button variant="secondary" onClick={() => { setAssign({ assignee: assignees[0]?.user.id ?? '', reviewer: reviewer?.user.id ?? '' }); setDlg('assign'); }}>{t('Assign')}</Button> : null}
           {canWrite ? <Button variant="ghost" onClick={() => { setEdit({ title: m.title, description: m.description ?? '', priority: m.priority, dueDate: m.dueDate?.slice(0, 10) ?? '' }); setDlg('edit'); }}>{t('Edit')}</Button> : null}
           {can('matter:restrict', m.unit) ? <Button variant="ghost" onClick={() => { setNamed(m.access?.map((a) => a.user.id) ?? []); setDlg('restrict'); }}>{m.restricted ? t('Ethical wall') : t('Restrict')}</Button> : null}
           {can('hold:place', m.unit) || can('hold:release') ? <Button variant="ghost" onClick={() => setDlg('hold')}>{m.legalHold ? t('Release hold') : t('Legal hold')}</Button> : null}
