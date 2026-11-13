@@ -1,0 +1,102 @@
+# Production on STELCO servers. Secrets come from ./secrets/*.env (generated from Vault at deploy time; never committed).
+#   docker compose -f infra/compose.prod.yml --env-file infra/secrets/compose.env up -d
+# Networks: only the proxy publishes a port; app and data networks are internal (no internet egress).
+name: ldms
+x-hardening: &hardening
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
+  restart: unless-stopped
+  logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
+
+services:
+  proxy:
+    image: owasp/modsecurity-crs:4.10-nginx-202501050801
+    <<: *hardening
+    cap_add: ["NET_BIND_SERVICE", "CHOWN", "SETUID", "SETGID"]
+    tmpfs: ["/tmp", "/var/cache/nginx", "/var/run", "/etc/nginx/conf.d"]
+    ports: ["443:8443", "80:8080"]
+    environment:
+      BACKEND: http://web:3000
+      PARANOIA: "2"
+      ANOMALY_INBOUND: "10"
+      MODSEC_RULE_ENGINE: "On"
+      PROXY_SSL: "on"
+      SSL_PORT: "8443"
+      PORT: "8080"
+      MODSEC_REQ_BODY_LIMIT: "55000000"
+    volumes:
+      - ./nginx/ldms.conf:/etc/nginx/templates/conf.d/ldms.conf.template:ro
+      - ./nginx/crs-exclusions.conf:/etc/modsecurity.d/owasp-crs/rules/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf:ro
+      - ${TLS_DIR:-./secrets/tls}:/etc/nginx/tls:ro
+    networks: [dmz]
+    depends_on: [web]
+
+  web:
+    image: ${REGISTRY:-registry.stelco.internal}/ldms-web:${TAG:?set TAG}
+    <<: *hardening
+    tmpfs: ["/tmp", "/app/apps/web/.next/cache"]
+    environment: { API_INTERNAL_URL: "http://api:4000", NODE_ENV: production }
+    networks: [dmz, app]
+    depends_on: [api]
+
+  api:
+    image: ${REGISTRY:-registry.stelco.internal}/ldms-api:${TAG:?set TAG}
+    <<: *hardening
+    tmpfs: ["/tmp"]
+    env_file: [./secrets/api.env]
+    networks: [app, data]
+    depends_on: [postgres, redis, clamav]
+
+  worker:
+    image: ${REGISTRY:-registry.stelco.internal}/ldms-worker:${TAG:?set TAG}
+    <<: *hardening
+    tmpfs: ["/tmp:size=2g"]
+    env_file: [./secrets/api.env]
+    deploy: { resources: { limits: { cpus: "2", memory: 3g } } }
+    networks: [app, data, smtp]
+    depends_on: [postgres, redis, clamav]
+
+  migrate:
+    image: ${REGISTRY:-registry.stelco.internal}/ldms-api:${TAG:?set TAG}
+    env_file: [./secrets/api.env]
+    command: ["sh", "-c", "DATABASE_URL=$$MIGRATION_DATABASE_URL npx prisma migrate deploy && node scripts/apply-sql.js"]
+    networks: [data]
+    profiles: ["migrate"]
+
+  postgres:
+    image: postgres:17.2-alpine
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    env_file: [./secrets/postgres.env]
+    command: ["postgres", "-c", "ssl=on", "-c", "ssl_cert_file=/tls/server.crt", "-c", "ssl_key_file=/tls/server.key", "-c", "ssl_min_protocol_version=TLSv1.2", "-c", "log_connections=on", "-c", "archive_mode=on", "-c", "archive_command=pgbackrest --stanza=ldms archive-push %p"]
+    volumes: [/srv/ldms/pgdata:/var/lib/postgresql/data, ${TLS_DIR:-./secrets/tls}/postgres:/tls:ro]
+    networks: [data]
+
+  redis:
+    image: redis:7.4-alpine
+    <<: *hardening
+    command: ["redis-server", "--tls-port", "6380", "--port", "0", "--tls-cert-file", "/tls/redis.crt", "--tls-key-file", "/tls/redis.key", "--tls-ca-cert-file", "/tls/ca.crt", "--requirepass", "${REDIS_PASSWORD:?}", "--appendonly", "yes"]
+    volumes: [/srv/ldms/redis:/data, ${TLS_DIR:-./secrets/tls}/redis:/tls:ro]
+    networks: [data]
+
+  clamav:
+    image: clamav/clamav:1.4
+    restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    volumes: [/srv/ldms/clamav:/var/lib/clamav]
+    networks: [data, av-updates]
+
+  gotenberg:
+    image: gotenberg/gotenberg:8.15
+    <<: *hardening
+    tmpfs: ["/tmp"]
+    command: ["gotenberg", "--chromium-deny-list=^(?!file:///tmp/).*", "--api-timeout=60s"]
+    networks: [app]
+
+networks:
+  dmz: {}
+  app: { internal: true }
+  data: { internal: true }
+  smtp: {}            # worker → SMTP relay only (restrict with host firewall)
+  av-updates: {}      # clamav → internal signature mirror only

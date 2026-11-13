@@ -1,0 +1,94 @@
+name: LDMS CI
+on:
+  push: { paths: ["stelco-ldms/**", ".github/workflows/ldms-*.yml"] }
+  pull_request: { paths: ["stelco-ldms/**"] }
+permissions: { contents: read }
+defaults: { run: { working-directory: stelco-ldms } }
+concurrency: { group: ldms-${{ github.ref }}, cancel-in-progress: true }
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_USER: ldms_owner, POSTGRES_PASSWORD: dev_owner_pw, POSTGRES_DB: ldms_test }
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+      clamav:
+        image: clamav/clamav:1.4
+        ports: ["3310:3310"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.28.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: stelco-ldms/pnpm-lock.yaml }
+      - run: sudo apt-get update && sudo apt-get install -y poppler-utils postgresql-client
+      - run: pnpm install --frozen-lockfile
+      - run: PGPASSWORD=dev_owner_pw psql -h localhost -U ldms_owner -d ldms_test -c "CREATE ROLE ldms_app LOGIN PASSWORD 'dev_app_pw'; ALTER ROLE ldms_owner CREATEDB;"
+      - run: pnpm build:shared && pnpm --filter api prisma:generate
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Wait for ClamAV
+        run: for i in $(seq 1 60); do printf 'zPING\0' | nc -w2 localhost 3310 | grep -q PONG && exit 0; sleep 5; done; exit 1
+      - run: pnpm test:int
+      - name: Build
+        run: pnpm --filter api build && pnpm --filter web build
+      - name: E2E (Playwright)
+        env: { DEMO_PASSWORD: Demo-Passphrase-2026, DEMO_TOTP_SECRET: JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP }
+        run: |
+          npx --yes playwright@1.63.0 install --with-deps chromium
+          export $(grep -v '^#' apps/api/.env.ci | xargs)
+          (cd apps/api && DATABASE_URL=$MIGRATION_DATABASE_URL npx prisma migrate deploy && DATABASE_URL=$MIGRATION_DATABASE_URL node scripts/apply-sql.js && DATABASE_URL=$MIGRATION_DATABASE_URL node -r @swc-node/register prisma/seed.ts)
+          (cd apps/api && node dist/main.js &) ; (cd apps/web && API_INTERNAL_URL=http://localhost:4000 npx next start -p 3000 &)
+          sleep 8 && pnpm --filter web test:e2e
+
+  security:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, security-events: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Secret scanning (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.28.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Dependency audit
+        run: pnpm install --frozen-lockfile && pnpm audit --prod --audit-level high
+      - name: Semgrep SAST
+        run: pipx run semgrep==1.99.0 scan --config p/owasp-top-ten --config p/typescript --config p/nodejsscan --error --exclude node_modules .
+
+  codeql:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, security-events: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with: { languages: javascript-typescript, queries: security-extended }
+      - uses: github/codeql-action/analyze@v3
+
+  images:
+    runs-on: ubuntu-24.04
+    needs: [test, security]
+    permissions: { contents: read, security-events: write }
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          docker build -f infra/docker/api.Dockerfile --target api -t ldms-api:ci .
+          docker build -f infra/docker/api.Dockerfile --target worker -t ldms-worker:ci .
+          docker build -f infra/docker/web.Dockerfile -t ldms-web:ci .
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with: { image-ref: "ldms-api:ci", severity: "HIGH,CRITICAL", ignore-unfixed: true, exit-code: "1" }
+      - uses: aquasecurity/trivy-action@0.28.0
+        with: { image-ref: "ldms-web:ci", severity: "HIGH,CRITICAL", ignore-unfixed: true, exit-code: "1" }
+      - name: SBOM
+        uses: anchore/sbom-action@v0
+        with: { image: "ldms-api:ci", format: spdx-json }

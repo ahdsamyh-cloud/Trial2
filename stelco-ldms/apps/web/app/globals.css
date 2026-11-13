@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html { -webkit-text-size-adjust: 100%; }
+body { @apply bg-slate-50 text-slate-900 antialiased; }
+:focus-visible { outline-color: #1f6fd1; }
+.diff-added { @apply bg-green-100 text-green-900; }
+.diff-removed { @apply bg-red-100 text-red-900 line-through; }
+@media print { aside, header, nav { display: none !important; } }

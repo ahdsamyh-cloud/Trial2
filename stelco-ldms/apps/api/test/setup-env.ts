@@ -1,0 +1,20 @@
+// Test configuration: isolated database (runtime role), inline jobs, real ClamAV with the EICAR test signature.
+process.env.NODE_ENV = 'test';
+process.env.DATABASE_URL ??= 'postgresql://ldms_app:dev_app_pw@localhost:5432/ldms_test';
+process.env.MIGRATION_DATABASE_URL ??= 'postgresql://ldms_owner:dev_owner_pw@localhost:5432/ldms_test';
+process.env.REDIS_URL ??= 'redis://localhost:6379/5';
+process.env.APP_ORIGIN = 'http://localhost:3000';
+process.env.FIELD_KEYS ??= 'k1:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=,k0:ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=';
+process.env.FIELD_KEY_ACTIVE ??= 'k1';
+process.env.SIGNING_KEY ??= 'dGVzdC1zaWduaW5nLWtleS10ZXN0LXNpZ25pbmcta2V5LXRlc3Qtc2lnbmluZy1rZXk=';
+process.env.STORAGE_DRIVER = 'fs';
+process.env.STORAGE_FS_ROOT ??= '/tmp/ldms-test-storage';
+process.env.AV_MODE ??= 'clamd';
+process.env.QUEUE_INLINE = 'true';
+process.env.SMTP_ENABLED = 'false';
+process.env.LOGIN_DELAY_BASE_MS = '0';
+process.env.RATE_LIMIT_PER_MIN = '100000';
+process.env.SEED_DEMO = 'true';
+process.env.DEMO_PASSWORD = 'Demo-Passphrase-2026';
+process.env.DEMO_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+process.env.OCR_ENABLED = 'false';

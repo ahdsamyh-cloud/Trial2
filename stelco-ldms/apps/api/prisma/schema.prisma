@@ -1,0 +1,1387 @@
+// STELCO LDMS — data model. See docs/PLAN.md §3.
+// Fields ending in `Enc` hold field-level-encrypted values (CryptoService, AES-256-GCM envelope).
+// Row-Level Security policies for restricted matters live in prisma/sql/rls.sql.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================ enums
+enum Unit {
+  LIT
+  CMP
+  DRF
+  AWR
+}
+
+enum RoleCode {
+  SUPER_ADMIN
+  HOD
+  UNIT_HEAD
+  LEGAL_OFFICER
+  PARALEGAL
+  REQUESTER
+  AUDITOR
+  MGMT_VIEWER
+}
+
+enum UserStatus {
+  PENDING_SETUP
+  ACTIVE
+  DISABLED
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum TokenPurpose {
+  SETUP
+  RESET
+}
+
+enum IdentityProvider {
+  LOCAL
+  ENTRA
+}
+
+enum IntakeSourceKind {
+  EMAIL
+  LETTER
+  PHONE
+  WALKIN
+  PORTAL
+}
+
+enum IntakeAdapter {
+  MANUAL
+  PORTAL
+  GRAPH
+}
+
+enum AssignmentRole {
+  ASSIGNEE
+  REVIEWER
+  APPROVER
+  WATCHER
+}
+
+enum ScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
+  ERROR
+}
+
+enum SlaUnit {
+  BUSINESS
+  CALENDAR
+}
+
+enum Digest {
+  NONE
+  DAILY
+  WEEKLY
+}
+
+enum OutboxStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum ImportStatus {
+  UPLOADED
+  PREVIEWED
+  COMMITTED
+  ROLLED_BACK
+  FAILED
+}
+
+enum RiskRating {
+  PROBABLE
+  POSSIBLE
+  REMOTE
+}
+
+enum Severity {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+// ============================================================ identity & access
+model Department {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users     User[]
+  employees Employee[]
+}
+
+model User {
+  id                 String     @id @default(cuid())
+  username           String     @unique
+  displayName        String
+  email              String     @unique
+  departmentId       String?
+  department         Department? @relation(fields: [departmentId], references: [id])
+  status             UserStatus @default(PENDING_SETUP)
+  isAdminAccount     Boolean    @default(false)
+  accessExpiresAt    DateTime?
+  mustChangePassword Boolean    @default(true)
+  lastLoginAt        DateTime?
+  failedCount        Int        @default(0)
+  lockedUntil        DateTime?
+  lockoutCount24h    Int        @default(0)
+  lastLockoutAt      DateTime?
+  title              String?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  createdById        String?
+
+  identities    Identity[]
+  credential    LocalCredential?
+  mfaFactors    MfaFactor[]
+  backupCodes   BackupCode[]
+  sessions      Session[]
+  devices       KnownDevice[]
+  roles         UserRole[]
+  tokens        OneTimeToken[]
+  notifications Notification[]
+  pref          NotificationPref?
+  assignments   MatterAssignment[]
+  matterAccess  MatterAccess[]
+  employee      Employee?
+
+  @@index([status])
+}
+
+/// Sign-in identities. LOCAL now; ENTRA (subject = Entra object id) in Phase 8.
+model Identity {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider  IdentityProvider
+  subject   String
+  createdAt DateTime         @default(now())
+
+  @@unique([provider, subject])
+}
+
+model LocalCredential {
+  userId       String   @id
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  passwordHash String
+  changedAt    DateTime @default(now())
+}
+
+model MfaFactor {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String    @default("TOTP")
+  secretEnc  String
+  verifiedAt DateTime?
+  lastStep   BigInt    @default(0)
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model BackupCode {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model Session {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash      String    @unique
+  /// PENDING_MFA → FULL after second factor
+  stage          String    @default("PENDING_MFA")
+  createdAt      DateTime  @default(now())
+  lastSeenAt     DateTime  @default(now())
+  absoluteExpiry DateTime
+  reauthAt       DateTime?
+  ip             String?
+  userAgent      String?
+  mobile         Boolean   @default(false)
+  deviceId       String?
+  revokedAt      DateTime?
+  revokedReason  String?
+
+  @@index([userId, revokedAt])
+}
+
+model KnownDevice {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceHash String
+  label      String?
+  firstSeen  DateTime @default(now())
+  lastSeen   DateTime @default(now())
+
+  @@unique([userId, deviceHash])
+}
+
+model UserRole {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        RoleCode
+  unit        Unit?
+  expiresAt   DateTime?
+  grantedById String?
+  createdAt   DateTime  @default(now())
+
+  @@unique([userId, role, unit])
+}
+
+model OneTimeToken {
+  id        String       @id @default(cuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose   TokenPurpose
+  tokenHash String       @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime     @default(now())
+}
+
+model LoginThrottle {
+  key       String   @id
+  failures  Int      @default(0)
+  windowAt  DateTime @default(now())
+}
+
+// ============================================================ audit
+/// Append-only, hash-chained. UPDATE/DELETE/TRUNCATE blocked by trigger (prisma/sql/audit.sql).
+model AuditLog {
+  seq        BigInt   @id @default(autoincrement())
+  ts         DateTime @default(now())
+  actorId    String?
+  actorName  String?
+  sessionId  String?
+  ip         String?
+  action     String
+  entityType String?
+  entityId   String?
+  outcome    String   @default("SUCCESS")
+  before     Json?
+  after      Json?
+  meta       Json?
+  prevHash   String
+  hash       String   @unique
+
+  @@index([entityType, entityId])
+  @@index([actorId, ts])
+  @@index([action, ts])
+}
+
+// ============================================================ notifications
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String?
+  link      String?
+  matterId  String?
+  readAt    DateTime?
+  digested  Boolean   @default(false)
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+model NotificationPref {
+  userId String  @id
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email  Boolean @default(true)
+  digest Digest  @default(DAILY)
+}
+
+model EmailOutbox {
+  id        String       @id @default(cuid())
+  to        String
+  subject   String
+  text      String
+  status    OutboxStatus @default(PENDING)
+  attempts  Int          @default(0)
+  lastError String?
+  sentAt    DateTime?
+  createdAt DateTime     @default(now())
+
+  @@index([status])
+}
+
+// ============================================================ configuration
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model Holiday {
+  id   String   @id @default(cuid())
+  date String   @unique // YYYY-MM-DD local
+  name String
+}
+
+model SlaPolicy {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  target       Int
+  unit         SlaUnit  @default(BUSINESS)
+  urgentHalves Boolean  @default(true)
+  active       Boolean  @default(true)
+  updatedAt    DateTime @updatedAt
+
+  requestTypes RequestType[]
+  clocks       SlaClock[]
+}
+
+model RequestType {
+  id          String     @id @default(cuid())
+  unit        Unit
+  code        String     @unique
+  name        String
+  slaPolicyId String?
+  slaPolicy   SlaPolicy? @relation(fields: [slaPolicyId], references: [id])
+  active      Boolean    @default(true)
+
+  matters Matter[]
+}
+
+model StatusDefinition {
+  id         String  @id @default(cuid())
+  unit       Unit
+  code       String
+  label      String
+  sortOrder  Int
+  isTerminal Boolean @default(false)
+
+  @@unique([unit, code])
+}
+
+model EmailTemplate {
+  id      String @id @default(cuid())
+  code    String @unique
+  subject String
+  body    String
+}
+
+model DocumentType {
+  id    String @id @default(cuid())
+  code  String @unique
+  name  String
+  unit  Unit?
+}
+
+model LawFirm {
+  id      String           @id @default(cuid())
+  name    String           @unique
+  address String?
+  phone   String?
+  email   String?
+  active  Boolean          @default(true)
+  lawyers ExternalLawyer[]
+  cases   LitigationCase[]
+  engagements Engagement[]
+  evaluations FirmEvaluation[]
+}
+
+model ExternalLawyer {
+  id     String   @id @default(cuid())
+  firmId String
+  firm   LawFirm  @relation(fields: [firmId], references: [id])
+  name   String
+  email  String?
+  phone  String?
+  cases  LitigationCase[]
+
+  @@unique([firmId, name])
+}
+
+model Regulator {
+  id       String    @id @default(cuid())
+  name     String    @unique
+  website  String?
+  laws     Law[]
+  licences Licence[]
+}
+
+model Court {
+  id           String   @id @default(cuid())
+  name         String   @unique
+  kind         String   @default("COURT") // COURT | TRIBUNAL | ARBITRATION
+  jurisdiction String?
+  cases        LitigationCase[]
+  hearings     Hearing[]
+}
+
+model RetentionPolicy {
+  id         String @id @default(cuid())
+  recordType String @unique
+  years      Int
+  trigger    String // e.g. CLOSED_AT, EXPIRY
+}
+
+model ReferenceSequence {
+  prefix String
+  year   Int
+  last   Int    @default(0)
+
+  @@id([prefix, year])
+}
+
+// ============================================================ intake
+model Intake {
+  id            String           @id @default(cuid())
+  intakeNo      String           @unique
+  source        IntakeSourceKind
+  adapter       IntakeAdapter    @default(MANUAL)
+  receivedAt    DateTime
+  senderName    String
+  senderEmail   String?
+  senderDeptId  String?
+  subject       String
+  summary       String?
+  emailRef      String?
+  priority      Priority         @default(NORMAL)
+  dueDate       DateTime?
+  status        String           @default("NEW")
+  suggestedUnit Unit?
+  matterId      String?
+  matter        Matter?          @relation(fields: [matterId], references: [id])
+  duplicateOfId String?
+  assigneeId    String?
+  triageNote    String?
+  submittedById String?
+  createdById   String
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  email     EmailMessage?
+  documents Document[]
+
+  @@index([status, receivedAt])
+}
+
+/// Email metadata stored from day one so Phase 8 Graph ingestion matches manual records.
+model EmailMessage {
+  id                String        @id @default(cuid())
+  intakeId          String        @unique
+  intake            Intake        @relation(fields: [intakeId], references: [id], onDelete: Cascade)
+  adapter           IntakeAdapter @default(MANUAL)
+  internetMessageId String?       @unique
+  graphMessageId    String?
+  conversationId    String?
+  fromName          String?
+  fromAddr          String?
+  to                Json?
+  cc                Json?
+  sentAt            DateTime?
+  receivedAt        DateTime?
+  subject           String?
+  bodyText          String?
+  bodyHtmlSanitized String?
+  originalDocId     String?
+
+  @@index([conversationId])
+}
+
+// ============================================================ matters (core)
+model Matter {
+  id               String    @id @default(cuid())
+  reference        String    @unique
+  unit             Unit
+  requestTypeId    String?
+  requestType      RequestType? @relation(fields: [requestTypeId], references: [id])
+  title            String
+  description      String?
+  descriptionEnc   String?
+  status           String
+  priority         Priority  @default(NORMAL)
+  requestingDeptId String?
+  requesterId      String?
+  requesterName    String?
+  dueDate          DateTime?
+  restricted       Boolean   @default(false)
+  tags             String[]  @default([])
+  importBatchId    String?
+  importBatch      ImportBatch? @relation(fields: [importBatchId], references: [id])
+  legalHold        Boolean   @default(false)
+  closedAt         DateTime?
+  createdById      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  lastActivityAt   DateTime  @default(now())
+  searchText       String?
+
+  intakes     Intake[]
+  assignments MatterAssignment[]
+  access      MatterAccess[]
+  transitions StatusTransition[]
+  comments    Comment[]
+  linksFrom   MatterLink[] @relation("from")
+  linksTo     MatterLink[] @relation("to")
+  slaClocks   SlaClock[]
+  documents   Document[]
+  events      CalendarEvent[]
+  litigation  LitigationCase?
+  drafting    DraftingRequest?
+  contracts   Contract[]
+  opinions    LegalOpinion[]
+
+  @@index([unit, status])
+  @@index([requestingDeptId])
+}
+
+model MatterAssignment {
+  id       String         @id @default(cuid())
+  matterId String
+  matter   Matter         @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User           @relation(fields: [userId], references: [id])
+  role     AssignmentRole
+  createdAt DateTime      @default(now())
+
+  @@unique([matterId, userId, role])
+  @@index([userId, role])
+}
+
+/// Ethical wall: named users who may see a restricted matter (plus HoD).
+model MatterAccess {
+  id          String   @id @default(cuid())
+  matterId    String
+  matter      Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  grantedById String?
+  createdAt   DateTime @default(now())
+
+  @@unique([matterId, userId])
+}
+
+model StatusTransition {
+  id         String   @id @default(cuid())
+  matterId   String
+  matter     Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  fromStatus String?
+  toStatus   String
+  action     String
+  actorId    String
+  comment    String?
+  at         DateTime @default(now())
+
+  @@index([matterId, at])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  matterId  String
+  matter    Matter   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  authorId  String
+  body      String?
+  bodyEnc   String?
+  mentions  String[] @default([])
+  internal  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([matterId])
+}
+
+model MatterLink {
+  id     String @id @default(cuid())
+  fromId String
+  from   Matter @relation("from", fields: [fromId], references: [id], onDelete: Cascade)
+  toId   String
+  to     Matter @relation("to", fields: [toId], references: [id], onDelete: Cascade)
+  kind   String @default("RELATED")
+
+  @@unique([fromId, toId])
+}
+
+model SlaClock {
+  id              String     @id @default(cuid())
+  matterId        String?
+  matter          Matter?    @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  /// Non-matter subjects (hearing, dissemination recipient, check cycle, finding, session)
+  subjectType     String?
+  subjectId       String?
+  policyId        String
+  policy          SlaPolicy  @relation(fields: [policyId], references: [id])
+  step            String
+  urgent          Boolean    @default(false)
+  startedAt       DateTime
+  dueAt           DateTime
+  warnedAt        DateTime?
+  breachedAt      DateTime?
+  stoppedAt       DateTime?
+  escalationLevel Int        @default(0)
+  ownerId         String?
+  pauses          SlaPause[]
+
+  @@index([stoppedAt])
+  @@index([subjectType, subjectId])
+}
+
+model SlaPause {
+  id      String    @id @default(cuid())
+  clockId String
+  clock   SlaClock  @relation(fields: [clockId], references: [id], onDelete: Cascade)
+  from    DateTime
+  to      DateTime?
+  reason  String?
+}
+
+// ============================================================ documents
+/// Exactly one owner FK is set (CHECK constraint in prisma/sql/constraints.sql).
+model Document {
+  id               String    @id @default(cuid())
+  title            String
+  docTypeCode      String?
+  matterId         String?
+  matter           Matter?   @relation(fields: [matterId], references: [id])
+  intakeId         String?
+  intake           Intake?   @relation(fields: [intakeId], references: [id])
+  hearingId        String?
+  hearing          Hearing?  @relation(fields: [hearingId], references: [id])
+  lawId            String?
+  law              Law?      @relation(fields: [lawId], references: [id])
+  checkItemId      String?
+  checkItem        CheckItem? @relation(fields: [checkItemId], references: [id])
+  findingId        String?
+  finding          Finding?  @relation(fields: [findingId], references: [id])
+  sessionId        String?
+  session          AwarenessSession? @relation(fields: [sessionId], references: [id])
+  contractId       String?
+  contract         Contract? @relation(fields: [contractId], references: [id])
+  poaId            String?
+  poa              PowerOfAttorney? @relation(fields: [poaId], references: [id])
+  templateId       String?
+  libraryKind      String?   // TEMPLATE | MATERIAL | IMPORT | REPORT
+  currentVersionNo Int       @default(0)
+  checkedOutById   String?
+  checkedOutAt     DateTime?
+  legalHold        Boolean   @default(false)
+  sharedToPortal   Boolean   @default(false)
+  submittedToCourtOn DateTime?
+  deletedAt        DateTime?
+  createdById      String
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  versions DocumentVersion[]
+
+  @@index([matterId])
+  @@index([intakeId])
+}
+
+model DocumentVersion {
+  id           String     @id @default(cuid())
+  documentId   String
+  document     Document   @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  versionNo    Int
+  stageLabel   String?
+  filename     String
+  storageKey   String     @unique
+  sha256       String
+  size         Int
+  detectedMime String
+  scanStatus   ScanStatus @default(PENDING)
+  scanDetail   String?
+  extractedText String?
+  ocrApplied   Boolean    @default(false)
+  comment      String?
+  uploadedById String
+  createdAt    DateTime   @default(now())
+
+  accessLogs DocumentAccessLog[]
+
+  @@unique([documentId, versionNo])
+}
+
+model DocumentAccessLog {
+  id        String          @id @default(cuid())
+  versionId String
+  version   DocumentVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  userId    String
+  action    String // UPLOAD | DOWNLOAD | VIEW | CHECKOUT | CHECKIN
+  ip        String?
+  at        DateTime        @default(now())
+
+  @@index([versionId])
+}
+
+model LegalHold {
+  id         String    @id @default(cuid())
+  scopeType  String // MATTER | DOCUMENT
+  scopeId    String
+  reason     String
+  placedById String
+  placedAt   DateTime  @default(now())
+  releasedAt DateTime?
+  releasedById String?
+}
+
+model DisposalRequest {
+  id          String    @id @default(cuid())
+  recordType  String
+  recordId    String
+  reason      String
+  requestedById String
+  status      String    @default("PENDING") // PENDING | APPROVED | REJECTED | DISPOSED
+  decidedById String?
+  decidedAt   DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+// ============================================================ calendar
+model CalendarEvent {
+  id         String    @id @default(cuid())
+  kind       String // HEARING | DEADLINE | LIMITATION | COMPLIANCE_CHECK | FILING | CONTRACT_EXPIRY | CONTRACT_NOTICE | SESSION | POA_EXPIRY | LICENCE_EXPIRY | FOLLOW_UP
+  unit       Unit
+  title      String
+  sourceType String
+  sourceId   String
+  startsAt   DateTime
+  endsAt     DateTime?
+  allDay     Boolean   @default(false)
+  ownerId    String?
+  matterId   String?
+  matter     Matter?   @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  restricted Boolean   @default(false)
+  location   String?
+  cancelled  Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  reminders Reminder[]
+
+  @@unique([sourceType, sourceId, kind])
+  @@index([startsAt])
+}
+
+model Reminder {
+  id         String        @id @default(cuid())
+  eventId    String
+  event      CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  offsetDays Int
+  sendAt     DateTime
+  sentAt     DateTime?
+
+  @@unique([eventId, offsetDays])
+  @@index([sentAt, sendAt])
+}
+
+// ============================================================ import
+model ImportMapping {
+  id        String   @id @default(cuid())
+  name      String
+  kind      String // LITIGATION | CONTRACTS | LAWS | STAFF
+  columnMap Json
+  createdAt DateTime @default(now())
+
+  @@unique([kind, name])
+}
+
+model ImportBatch {
+  id           String       @id @default(cuid())
+  kind         String
+  filename     String
+  storageKey   String
+  status       ImportStatus @default(UPLOADED)
+  columnMap    Json?
+  options      Json?
+  stats        Json?
+  headers      String[]     @default([])
+  createdById  String
+  createdAt    DateTime     @default(now())
+  committedAt  DateTime?
+  rolledBackAt DateTime?
+
+  rows    ImportRow[]
+  matters Matter[]
+}
+
+model ImportRow {
+  id       String      @id @default(cuid())
+  batchId  String
+  batch    ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  rowNo    Int
+  raw      Json
+  errors   String[]    @default([])
+  warnings String[]    @default([])
+  action   String // CREATE | SKIP | DUPLICATE | ERROR
+  entityId String?
+
+  @@index([batchId])
+}
+
+// ============================================================ litigation
+model LitigationCase {
+  matterId             String          @id
+  matter               Matter          @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  courtCaseNo          String?
+  courtId              String?
+  court                Court?          @relation(fields: [courtId], references: [id])
+  jurisdiction         String?
+  caseType             String          // CIVIL | LABOUR | COMMERCIAL | CRIMINAL | REGULATORY | ARBITRATION
+  ourRole              String          // PLAINTIFF | DEFENDANT | THIRD_PARTY
+  subject              String?
+  externalFirmId       String?
+  externalFirm         LawFirm?        @relation(fields: [externalFirmId], references: [id])
+  externalLawyerId     String?
+  externalLawyer       ExternalLawyer? @relation(fields: [externalLawyerId], references: [id])
+  responsibleOfficerId String?
+  claimAmount          Decimal?        @db.Decimal(18, 2)
+  currency             String          @default("MVR")
+  filingDate           DateTime?
+  risk                 RiskRating?
+  exposureEnc          String?
+  remarks              String?
+  lastUpdateAt         DateTime        @default(now())
+  noUpdateFlaggedAt    DateTime?
+
+  parties     CaseParty[]
+  hearings    Hearing[]
+  deadlines   CaseDeadline[]
+  engagements Engagement[]
+  updates     CounselUpdate[]
+  evaluation  FirmEvaluation?
+  outcomes    Outcome[]
+
+  @@index([courtCaseNo])
+}
+
+model CaseParty {
+  id      String         @id @default(cuid())
+  caseId  String
+  case    LitigationCase @relation(fields: [caseId], references: [matterId], onDelete: Cascade)
+  name    String
+  side    String // OURS | OPPOSING | THIRD_PARTY
+  counsel String?
+}
+
+model Hearing {
+  id               String         @id @default(cuid())
+  caseId           String
+  case             LitigationCase @relation(fields: [caseId], references: [matterId], onDelete: Cascade)
+  startsAt         DateTime
+  courtId          String?
+  court            Court?         @relation(fields: [courtId], references: [id])
+  judge            String?
+  purpose          String?
+  status           String         @default("SCHEDULED") // SCHEDULED | HELD | ADJOURNED | CANCELLED
+  attendees        Json?
+  summary          Json?          // { whatHappened, ordersMade, nextSteps, companyActions }
+  outcome          String?
+  summaryEnteredAt DateTime?
+  summaryById      String?
+  nextHearingId    String?
+  createdAt        DateTime       @default(now())
+
+  documents Document[]
+
+  @@index([startsAt])
+}
+
+model CaseDeadline {
+  id          String         @id @default(cuid())
+  caseId      String
+  case        LitigationCase @relation(fields: [caseId], references: [matterId], onDelete: Cascade)
+  type        String // FILING | SUBMISSION | APPEAL | LIMITATION | OTHER
+  title       String
+  dueAt       DateTime
+  ownerId     String?
+  status      String         @default("OPEN") // OPEN | DONE | MISSED
+  completedAt DateTime?
+}
+
+model Engagement {
+  id             String         @id @default(cuid())
+  caseId         String
+  case           LitigationCase @relation(fields: [caseId], references: [matterId], onDelete: Cascade)
+  firmId         String
+  firm           LawFirm        @relation(fields: [firmId], references: [id])
+  feeArrangement String?
+  budget         Decimal?       @db.Decimal(18, 2)
+  currency       String         @default("MVR")
+  startedOn      DateTime?
+  invoices       CounselInvoice[]
+}
+
+model CounselInvoice {
+  id           String     @id @default(cuid())
+  engagementId String
+  engagement   Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  invoiceNo    String
+  amount       Decimal    @db.Decimal(18, 2)
+  currency     String     @default("MVR")
+  receivedOn   DateTime
+  status       String     @default("RECEIVED") // RECEIVED | VERIFIED | SENT_FOR_PAYMENT | PAID | DISPUTED
+  verifiedById String?
+  notes        String?
+
+  @@unique([engagementId, invoiceNo])
+}
+
+model CounselUpdate {
+  id          String         @id @default(cuid())
+  caseId      String
+  case        LitigationCase @relation(fields: [caseId], references: [matterId], onDelete: Cascade)
+  receivedAt  DateTime
+  channel     String // EMAIL | PHONE | MEETING | LETTER
+  summary     String
+  enteredById String
+  createdAt   DateTime       @default(now())
+}
+
+model FirmEvaluation {
+  caseId         String         @id
+  case           LitigationCase @relation(fields: [caseId], references: [matterId], onDelete: Cascade)
+  firmId         String
+  firm           LawFirm        @relation(fields: [firmId], references: [id])
+  quality        Int
+  responsiveness Int
+  cost           Int
+  outcome        Int
+  comments       String?
+  evaluatedById  String
+  createdAt      DateTime       @default(now())
+}
+
+model Outcome {
+  id            String         @id @default(cuid())
+  caseId        String
+  case          LitigationCase @relation(fields: [caseId], references: [matterId], onDelete: Cascade)
+  kind          String // SETTLEMENT | JUDGMENT
+  decidedOn     DateTime
+  amountEnc     String?
+  currency      String         @default("MVR")
+  direction     String // PAYABLE | RECEIVABLE | NONE
+  paymentStatus String         @default("PENDING") // PENDING | PARTIAL | PAID | NA
+  terms         String?
+  enforcement   EnforcementAction[]
+}
+
+model EnforcementAction {
+  id        String   @id @default(cuid())
+  outcomeId String
+  outcome   Outcome  @relation(fields: [outcomeId], references: [id], onDelete: Cascade)
+  on        DateTime
+  action    String
+  status    String   @default("OPEN")
+}
+
+// ============================================================ drafting
+model DraftingRequest {
+  matterId         String    @id
+  matter           Matter    @relation(fields: [matterId], references: [id], onDelete: Cascade)
+  counterparty     String?
+  contractValue    Decimal?  @db.Decimal(18, 2)
+  currency         String    @default("MVR")
+  approvalLevel    String    @default("UNIT_HEAD") // UNIT_HEAD | HOD
+  escalationReason String?
+  drafterId        String?
+  reviewerId       String?
+  followUpDate     DateTime?
+  ackText          String?
+
+  reviews   ReviewRound[]
+  approvals Approval[]
+}
+
+model ReviewRound {
+  id                 String          @id @default(cuid())
+  matterId           String
+  request            DraftingRequest @relation(fields: [matterId], references: [matterId], onDelete: Cascade)
+  round              Int
+  reviewerId         String
+  submittedVersionId String?
+  decision           String? // RETURNED | REVIEWED
+  comments           String?
+  decidedAt          DateTime?
+  createdAt          DateTime        @default(now())
+}
+
+model Approval {
+  id         String          @id @default(cuid())
+  matterId   String
+  request    DraftingRequest @relation(fields: [matterId], references: [matterId], onDelete: Cascade)
+  level      String // UNIT_HEAD | HOD
+  approverId String
+  decision   String // APPROVED | ESCALATED | RETURNED
+  reason     String?
+  at         DateTime        @default(now())
+}
+
+model Template {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  category  String
+  body      String?
+  documentId String?
+  status    String   @default("DRAFT") // DRAFT | APPROVED | RETIRED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Clause {
+  id        String   @id @default(cuid())
+  title     String
+  body      String
+  tags      String[] @default([])
+  status    String   @default("APPROVED")
+  createdAt DateTime @default(now())
+}
+
+model Contract {
+  id               String    @id @default(cuid())
+  matterId         String?
+  matter           Matter?   @relation(fields: [matterId], references: [id])
+  title            String
+  parties          String[]  @default([])
+  value            Decimal?  @db.Decimal(18, 2)
+  currency         String    @default("MVR")
+  startDate        DateTime?
+  endDate          DateTime?
+  autoRenew        Boolean   @default(false)
+  noticePeriodDays Int?
+  ownerDeptId      String?
+  keyObligations   String?
+  status           String    @default("ACTIVE") // ACTIVE | EXPIRED | TERMINATED | RENEWED
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  documents Document[]
+}
+
+model PowerOfAttorney {
+  id           String    @id @default(cuid())
+  holderName   String
+  holderUserId String?
+  scope        String
+  issuedOn     DateTime
+  expiresOn    DateTime?
+  revokedOn    DateTime?
+  status       String    @default("ACTIVE") // ACTIVE | EXPIRED | REVOKED
+  matterId     String?
+  createdAt    DateTime  @default(now())
+
+  documents Document[]
+}
+
+model LegalOpinion {
+  id        String   @id @default(cuid())
+  matterId  String?
+  matter    Matter?  @relation(fields: [matterId], references: [id])
+  title     String
+  question  String
+  summary   String
+  tags      String[] @default([])
+  issuedOn  DateTime
+  createdAt DateTime @default(now())
+}
+
+// ============================================================ compliance
+model Law {
+  id          String    @id @default(cuid())
+  title       String
+  type        String // ACT | REGULATION | CIRCULAR | GUIDELINE | DIRECTIVE
+  regulatorId String?
+  regulator   Regulator? @relation(fields: [regulatorId], references: [id])
+  issuedOn    DateTime?
+  effectiveOn DateTime?
+  status      String    @default("IN_FORCE") // IN_FORCE | AMENDED | REPEALED
+  sourceUrl   String?
+  summary     String?
+  officerId   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  versions      LawVersion[]
+  obligations   Obligation[]
+  changes       RegulatoryChange[]
+  documents     Document[]
+  disseminations Dissemination[]
+}
+
+model LawVersion {
+  id        String   @id @default(cuid())
+  lawId     String
+  law       Law      @relation(fields: [lawId], references: [id], onDelete: Cascade)
+  versionNo Int
+  notes     String?
+  effectiveOn DateTime?
+  createdAt DateTime @default(now())
+
+  @@unique([lawId, versionNo])
+}
+
+model Obligation {
+  id               String   @id @default(cuid())
+  lawId            String
+  law              Law      @relation(fields: [lawId], references: [id], onDelete: Cascade)
+  description      String
+  article          String?
+  frequency        String // ONE_OFF | MONTHLY | QUARTERLY | SEMI_ANNUAL | ANNUAL
+  evidenceRequired String?
+  risk             Severity @default(MEDIUM)
+  penalty          String?
+  ownerId          String?
+  departmentIds    String[] @default([])
+  active           Boolean  @default(true)
+  nextCheckAt      DateTime?
+  createdAt        DateTime @default(now())
+
+  checkItems CheckItem[]
+}
+
+model RegulatoryChange {
+  id        String   @id @default(cuid())
+  lawId     String
+  law       Law      @relation(fields: [lawId], references: [id], onDelete: Cascade)
+  kind      String // NEW | AMENDED | REPEALED
+  impact    String?
+  affectedDeptIds String[] @default([])
+  officerId String?
+  status    String   @default("IDENTIFIED")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Dissemination {
+  id           String   @id @default(cuid())
+  subject      String
+  body         String
+  lawId        String?
+  law          Law?     @relation(fields: [lawId], references: [id])
+  obligationId String?
+  sentById     String
+  sentAt       DateTime @default(now())
+  dueAt        DateTime
+
+  recipients DisseminationRecipient[]
+}
+
+model DisseminationRecipient {
+  id               String        @id @default(cuid())
+  disseminationId  String
+  dissemination    Dissemination @relation(fields: [disseminationId], references: [id], onDelete: Cascade)
+  departmentId     String
+  acknowledgedById String?
+  acknowledgedAt   DateTime?
+  remindersSent    Int           @default(0)
+  lastReminderAt   DateTime?
+
+  @@unique([disseminationId, departmentId])
+}
+
+model CheckCycle {
+  id           String   @id @default(cuid())
+  departmentId String
+  period       String // e.g. 2026-Q4
+  dueAt        DateTime
+  status       String   @default("ISSUED")
+  submittedAt  DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+
+  items CheckItem[]
+
+  @@unique([departmentId, period])
+}
+
+model CheckItem {
+  id           String     @id @default(cuid())
+  cycleId      String
+  cycle        CheckCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  obligationId String
+  obligation   Obligation @relation(fields: [obligationId], references: [id])
+  response     String?
+  respondedById String?
+  rating       String? // COMPLIANT | PARTIAL | NON_COMPLIANT | NA
+  reviewerId   String?
+  reviewNote   String?
+
+  findings  Finding[]
+  documents Document[]
+
+  @@unique([cycleId, obligationId])
+}
+
+model Finding {
+  id           String    @id @default(cuid())
+  checkItemId  String?
+  checkItem    CheckItem? @relation(fields: [checkItemId], references: [id])
+  departmentId String
+  title        String
+  severity     Severity
+  actionPlan   String?
+  ownerId      String?
+  dueOn        DateTime
+  status       String    @default("OPEN")
+  closedAt     DateTime?
+  escalatedAt  DateTime?
+  createdAt    DateTime  @default(now())
+
+  actions   FindingAction[]
+  documents Document[]
+}
+
+model FindingAction {
+  id        String   @id @default(cuid())
+  findingId String
+  finding   Finding  @relation(fields: [findingId], references: [id], onDelete: Cascade)
+  note      String
+  byId      String
+  at        DateTime @default(now())
+}
+
+model Licence {
+  id          String    @id @default(cuid())
+  name        String
+  kind        String // LICENCE | PERMIT | FILING
+  regulatorId String?
+  regulator   Regulator? @relation(fields: [regulatorId], references: [id])
+  number      String?
+  issuedOn    DateTime?
+  expiresOn   DateTime?
+  ownerDeptId String?
+  status      String    @default("ACTIVE")
+  notes       String?
+  createdAt   DateTime  @default(now())
+}
+
+// ============================================================ awareness
+model AwarenessPlan {
+  id     String     @id @default(cuid())
+  year   Int        @unique
+  status String     @default("DRAFT") // DRAFT | APPROVED
+  items  PlanItem[]
+}
+
+model PlanItem {
+  id            String        @id @default(cuid())
+  planId        String
+  plan          AwarenessPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  topic         String
+  targetDeptIds String[]      @default([])
+  quarter       Int
+  status        String        @default("PLANNED") // PLANNED | DONE | DROPPED
+  sessions      AwarenessSession[]
+}
+
+model AwarenessSession {
+  id             String    @id @default(cuid())
+  planItemId     String?
+  planItem       PlanItem? @relation(fields: [planItemId], references: [id])
+  title          String
+  topic          String
+  format         String // IN_PERSON | ONLINE | ELEARNING | CIRCULAR
+  startsAt       DateTime
+  endsAt         DateTime
+  venue          String?
+  meetingUrl     String?
+  audienceDeptIds String[] @default([])
+  presenterIds   String[]  @default([])
+  preparerIds    String[]  @default([])
+  status         String    @default("PLANNED")
+  checkinSecret  String?
+  createdAt      DateTime  @default(now())
+
+  attendance Attendance[]
+  feedback   FeedbackResponse[]
+  quiz       QuizQuestion[]
+  documents  Document[]
+}
+
+model Employee {
+  id           String      @id @default(cuid())
+  staffNo      String      @unique
+  name         String
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+  userId       String?     @unique
+  user         User?       @relation(fields: [userId], references: [id])
+  active       Boolean     @default(true)
+
+  attendance Attendance[]
+}
+
+model Attendance {
+  id          String           @id @default(cuid())
+  sessionId   String
+  session     AwarenessSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee         @relation(fields: [employeeId], references: [id])
+  method      String // MANUAL | IMPORT | QR
+  checkedInAt DateTime         @default(now())
+
+  @@unique([sessionId, employeeId])
+}
+
+model FeedbackResponse {
+  id        String           @id @default(cuid())
+  sessionId String
+  session   AwarenessSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  rating    Int
+  comments  String?
+  quizScore Int?
+  createdAt DateTime         @default(now())
+}
+
+model QuizQuestion {
+  id        String           @id @default(cuid())
+  sessionId String
+  session   AwarenessSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  question  String
+  options   String[]
+  answer    Int
+}
+
+model Bulletin {
+  id            String    @id @default(cuid())
+  title         String
+  body          String
+  kind          String    @default("BULLETIN") // BULLETIN | NEWSLETTER | CIRCULAR
+  audienceDeptIds String[] @default([])
+  publishedAt   DateTime?
+  createdById   String
+  createdAt     DateTime  @default(now())
+}
+
+model FaqEntry {
+  id        String   @id @default(cuid())
+  question  String
+  answer    String
+  tags      String[] @default([])
+  published Boolean  @default(true)
+  createdAt DateTime @default(now())
+}

@@ -1,31 +1,46 @@
 # CLAUDE.md — STELCO Legal Department Management System (LDMS)
 
-## Status
-- **Phase 0 (plan), waiting for approval.** See `docs/PLAN.md`. No application code yet.
-- Do not start a phase until the user approves it. After each phase, report: what was built, how to run it, test results, open issues.
-- Phase 8 (Microsoft 365 / Entra / Graph) is **only built when the user asks**.
+Read `docs/PLAN.md` for the approved architecture. This file holds conventions, commands and notes that keep the code consistent.
 
-## Context
-- On-premises only (STELCO Linux servers). No public cloud services.
-- Local accounts + mandatory TOTP in v1. The auth layer must accept Entra ID OIDC later through the `Identity` table without reworking users or roles.
-- Time zone `Indian/Maldives`. Work week **Sun–Thu**. Business-day maths always go through `packages/shared/calendar.ts` (never hand-roll date maths).
-- English UI, but **all strings go in translation files** (next-intl).
-
-## Planned layout (pnpm workspaces)
-- `apps/web`: Next.js App Router + BFF. The browser only talks to this origin.
-- `apps/api`: NestJS (`main.ts` = HTTP, `main.worker.ts` = BullMQ worker). `src/core/*` + `src/units/{litigation,drafting,compliance,awareness}`.
-- `packages/shared`: zod schemas, enums, permission matrix, workflow tables, calendar.
-- `packages/db`: Prisma schema, migrations, RLS SQL, seeds.
-- `infra/`: Dockerfiles, compose files, nginx/ModSecurity, extractor image.
-
-## Non-negotiable conventions
-- Every API route declares `@Can(permission)` or `@Public()`. A test fails the build otherwise.
-- Record-level access always goes through `PolicyService` scopes. Restricted matters are invisible (404) to anyone not named on them, except the HoD.
-- Every state change goes through `WorkflowService` and writes `StatusTransition` + `AuditLog`.
-- Zod-validate every input and reject unknown keys. No string-built SQL (only `$queryRaw` tagged templates).
-- Every new resource gets IDOR tests in the integration suite.
-- Never log tokens, passwords, email bodies or document text. Never commit secrets (`.env.example` only).
-- Small commits with clear messages.
+## Layout (pnpm workspace in `stelco-ldms/`)
+- `packages/shared` — pure TS used by API and web: business-day calendar (`calendar.ts`), SLA maths (`sla.ts`), role→permission matrix (`permissions.ts`), workflow tables (`workflows.ts`), reference numbers, password policy. Build with `pnpm build:shared` before running API tests.
+- `apps/api` — NestJS. `src/main.ts` (HTTP) and `src/main.worker.ts` (BullMQ worker, recurring jobs). `src/core/*` shared modules; `src/units/*` one module per Legal unit. Prisma schema + SQL (triggers, RLS, grants) in `prisma/`.
+- `apps/web` — Next.js App Router. `app/api/[...path]/route.ts` is the BFF proxy: the browser never talks to the API directly. `middleware.ts` sets the nonce CSP and security headers.
+- `infra/` — Dockerfiles, compose (dev/prod), nginx + ModSecurity CRS config. CI lives at repo root `.github/workflows/ldms-*.yml`.
 
 ## Commands
-_To be filled in during Phase 1 (pnpm install, dev compose, test, lint, migrate, seed)._
+```bash
+pnpm install
+pnpm build:shared && pnpm --filter api prisma:generate
+# dev services: docker compose -f infra/compose.dev.yml up -d   (or local postgres/redis/clamd)
+cd apps/api && DATABASE_URL=$MIGRATION_DATABASE_URL npx prisma migrate deploy && DATABASE_URL=$MIGRATION_DATABASE_URL node scripts/apply-sql.js
+cd apps/api && DATABASE_URL=$MIGRATION_DATABASE_URL pnpm seed            # SEED_DEMO=true for demo users
+pnpm dev:api   # :4000      pnpm dev:worker      pnpm dev:web   # :3000
+pnpm test            # unit (shared + api/src)
+pnpm test:int        # API integration (real Postgres ldms_test, Redis db 5, clamd with EICAR sig)
+pnpm --filter web test:e2e   # Playwright; needs API + web running against a seeded DB
+pnpm typecheck
+```
+Demo users (dev/test only): password `DEMO_PASSWORD`, all share TOTP secret `DEMO_TOTP_SECRET`. Usernames: `adm.it`, `hod`, `uh.lit|cmp|drf|awr`, `lo.lit1`, `lo.lit2`, `lo.drf1`, `lo.drf2`, `lo.cmp1`, `lo.awr1`, `pl.lit`, `pl.drf`, `req.fin|hr|proc`, `auditor`, `mgmt`.
+
+## Non-negotiable conventions
+- **Every route** has `@Can(...)`, `@Authenticated()` or `@Public()`. The global `AuthGuard` denies anything else, and `test/access.int.test.ts` fails the build if a route lacks metadata.
+- **Record access** always goes through `PolicyService` (`matterScope`, `assertMatter`, `assertWrite`, `covers`). Return **404, not 403**, for records outside scope. Restricted matters: only named users + HoD. RLS (`prisma/sql/03_rls.sql`) repeats this in the database.
+- DB access: `prisma.db` (RLS context from the request) or `prisma.tx(fn)` for multi-statement work. `prisma.base` (no RLS context) only for auth/session/audit/system tables. Background jobs run via `runAsSystem`.
+- **Inserting a restricted matter**: insert unrestricted → add `MatterAccess` → set `restricted=true` (RLS requires RETURNING rows to be visible).
+- **Every state change and sensitive read** → `AuditService.log(...)`. Workflow transitions → `MattersService.recordTransition` (writes `StatusTransition` + audit).
+- **Validation**: zod schemas with `.strict()`; parse via `parse(schema, body)`. No generic "update everything" endpoints.
+- **Raw SQL** only via Prisma tagged templates (`$queryRaw\`...${param}\``). Never `$queryRawUnsafe` with user input.
+- **Encrypted fields** (`*Enc`) via `CryptoService.encrypt/decrypt`. Never log them.
+- **Files**: always via `DocumentsService.upload` (signature check → quarantine → ClamAV → clean → extract). Downloads only through signed 60 s links bound to user+session.
+- **Errors**: throw `DomainError`/`notFound`/`forbidden`/`badRequest`/`conflict`. The global filter hides internals.
+- **Business days**: use `@ldms/shared` calendar + `SettingsService.calendar()` (Sun–Thu, holidays, 16:00 cut-off). Never hand-roll date maths.
+- **Web**: all UI strings through `t()` (`lib/i18n.ts`); no inline `style=` in server-rendered markup (CSP); no confidential data in localStorage (only column/view preferences).
+- Tests: every new resource gets integration tests including IDOR cases (other unit, other department, not-named on restricted).
+
+## Notes / decisions
+- Prisma 6 (stable) rather than 7; zod 3; Next 15; Node 22 LTS.
+- TOTP replay protection: a used time-step cannot be reused. Tests that are not about sign-in create sessions directly (`test/helpers.ts → as()`).
+- Field encryption uses a keyring (`FIELD_KEYS=id:key,...`, `FIELD_KEY_ACTIVE`); the `crypto.rotate` job re-encrypts values under old keys.
+- MinIO community edition is in maintenance mode; storage is S3-API-only (`STORAGE_DRIVER=s3`) so the backend is a deployment choice.
+- ClamAV signatures cannot be downloaded in the build sandbox; tests use an EICAR-only signature DB.
