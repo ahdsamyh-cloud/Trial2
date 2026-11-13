@@ -31,7 +31,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
 );
 Button.displayName = 'Button';
 
-const fieldCls = 'block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:bg-slate-100';
+const fieldCls = 'block rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 disabled:bg-slate-100';
 
 export function Field({ label, hint, error, children, required, id }: { label: string; hint?: string; error?: string; children: (id: string) => ReactNode; required?: boolean; id?: string }) {
   const auto = useId();
@@ -49,13 +49,15 @@ export function Field({ label, hint, error, children, required, id }: { label: s
   );
 }
 
-export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, ...p }, ref) => <input ref={ref} className={clsx(fieldCls, className)} {...p} />);
+/** Full width unless the caller gives a width class (w-40, w-60…). */
+const width = (c?: string) => (c && /(^|\s)(sm:|md:|lg:)?w-/.test(c) ? '' : 'w-full');
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, ...p }, ref) => <input ref={ref} className={clsx(fieldCls, width(className), className)} {...p} />);
 Input.displayName = 'Input';
-export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...p }, ref) => <textarea ref={ref} className={clsx(fieldCls, 'min-h-[90px]', className)} {...p} />);
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...p }, ref) => <textarea ref={ref} className={clsx(fieldCls, 'min-h-[90px]', width(className), className)} {...p} />);
 Textarea.displayName = 'Textarea';
 export function Select({ className, options, placeholder, ...p }: SelectHTMLAttributes<HTMLSelectElement> & { options: { value: string; label: string }[]; placeholder?: string }) {
   return (
-    <select className={clsx(fieldCls, className)} {...p}>
+    <select className={clsx(fieldCls, width(className), className)} {...p}>
       {placeholder !== undefined ? <option value="">{placeholder}</option> : null}
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>

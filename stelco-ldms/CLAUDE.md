@@ -44,3 +44,9 @@ Demo users (dev/test only): password `DEMO_PASSWORD`, all share TOTP secret `DEM
 - Field encryption uses a keyring (`FIELD_KEYS=id:key,...`, `FIELD_KEY_ACTIVE`); the `crypto.rotate` job re-encrypts values under old keys.
 - MinIO community edition is in maintenance mode; storage is S3-API-only (`STORAGE_DRIVER=s3`) so the backend is a deployment choice.
 - ClamAV signatures cannot be downloaded in the build sandbox; tests use an EICAR-only signature DB.
+
+## Unit modules
+- **Litigation** (`src/units/litigation`): `LitigationService` (cases, hearings + structured summaries, deadlines, counsel engagements/invoices, updates, outcomes, firm evaluation, reports, `lit.no-update` job) and `LitigationImportService` (Excel register: upload → column mapping (saved) → dry-run preview → commit tagged with `ImportBatch` → rollback; error report). Status transitions in `@ldms/shared` `LITIGATION_TRANSITIONS`. Closing a case with an external firm requires a firm evaluation. Hearing "held" starts the `LIT_HEARING_SUMMARY` SLA clock (2 business days).
+- Unit modules register intake converters (`IntakeService.registerConverter`) and document owner types (`DocumentsService.registerOwner`) in `onModuleInit`.
+- Web: unit pages wrap the shared `MatterView` and add unit panels (`components/litigation-panels.tsx`).
+- Dev tip: `pkill -f next-server` (not `next start`) to stop the web server before rebuilding.

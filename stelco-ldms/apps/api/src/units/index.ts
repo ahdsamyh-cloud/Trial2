@@ -1,2 +1,4 @@
-/** Unit modules (one per Legal unit). Added phase by phase. */
-export const UNIT_MODULES: any[] = [];
+import { LitigationModule } from './litigation/litigation.module';
+
+/** Unit modules (one per Legal unit). */
+export const UNIT_MODULES: any[] = [LitigationModule];
