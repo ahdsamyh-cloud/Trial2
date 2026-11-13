@@ -10,7 +10,11 @@
 export function safeRedirectPath(next: string | null | undefined, fallback = '/'): string {
   if (!next || next.length > 2000) return fallback;
   if (!next.startsWith('/') || next.startsWith('//')) return fallback;
-  if (/[\\\u0000- \u007f]/.test(next)) return fallback;
+  // Plain character scan (no regex): reject control chars, space, DEL and backslash.
+  for (let i = 0; i < next.length; i++) {
+    const c = next.charCodeAt(i);
+    if (c <= 0x20 || c === 0x7f || c === 0x5c) return fallback;
+  }
   try {
     const base = 'https://ldms.invalid';
     const u = new URL(next, base);
