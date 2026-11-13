@@ -9,7 +9,7 @@ export function passwordPolicyErrors(pw: string, context: { username?: string; d
   if (len > PASSWORD_MAX) errors.push(`Password must be at most ${PASSWORD_MAX} characters`);
   const lower = pw.toLowerCase();
   if (context.username && context.username.length >= 3 && lower.includes(context.username.toLowerCase())) errors.push('Password must not contain your username');
-  if (/^(.)\1+$/.test(pw)) errors.push('Password must not be a single repeated character');
-  if (/stelco/i.test(pw) && len < 20) errors.push('Passwords containing "stelco" must be at least 20 characters');
+  if (len > 1 && new Set(pw).size === 1) errors.push('Password must not be a single repeated character');
+  if (lower.includes('stelco') && len < 20) errors.push('Passwords containing "stelco" must be at least 20 characters');
   return errors;
 }

@@ -54,6 +54,11 @@ describe('email HTML sanitiser', () => {
 
 describe('field-level encryption and signing', () => {
   const crypto = new CryptoService();
+  it('rejects a truncated GCM authentication tag', () => {
+    const parts = crypto.encrypt('secret')!.split('.');
+    parts[3] = Buffer.from(parts[3]!, 'base64url').subarray(0, 4).toString('base64url');
+    expect(() => crypto.decrypt(parts.join('.'))).toThrow();
+  });
   it('round-trips and detects tampering', () => {
     const e = crypto.encrypt('MVR 1,250,000 settlement')!;
     expect(e.startsWith('v1.k1.')).toBe(true);

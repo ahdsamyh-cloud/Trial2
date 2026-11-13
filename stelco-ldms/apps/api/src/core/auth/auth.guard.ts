@@ -6,6 +6,7 @@ import { ADMIN_NET_KEY, PARTIAL_KEY, PERMISSION_KEY, PUBLIC_KEY, REAUTH_KEY } fr
 import { ctx } from '../../common/context';
 import { DomainError } from '../../common/errors';
 import { config } from '../../config';
+import { isIPv4 } from 'node:net';
 import { PrismaService } from '../../common/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { SecurityAlerts } from '../notifications/security-alerts.service';
@@ -16,14 +17,14 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 function ipInAllowlist(ip: string | undefined, list: string): boolean {
   if (!list.trim()) return true;
   if (!ip) return false;
-  const clean = ip.replace(/^::ffff:/, '');
+  const clean = ip.startsWith('::ffff:') ? ip.slice(7) : ip;
   return list.split(',').map((s) => s.trim()).filter(Boolean).some((entry) => {
     const [base, bitsStr] = entry.split('/');
     if (!bitsStr) return base === clean;
     const toInt = (a: string) => a.split('.').reduce((n, o) => (n << 8) + Number(o), 0) >>> 0;
     const bits = Number(bitsStr);
     const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
-    return /^\d+\.\d+\.\d+\.\d+$/.test(clean) && (toInt(clean) & mask) === (toInt(base!) & mask);
+    return isIPv4(clean) && (toInt(clean) & mask) === (toInt(base!) & mask);
   });
 }
 

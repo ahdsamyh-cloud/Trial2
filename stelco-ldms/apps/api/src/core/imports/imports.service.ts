@@ -62,6 +62,7 @@ export class ImportsService {
     if (!ws) throw badRequest('Empty workbook');
     const headers = (ws.getRow(1).values as unknown[]).slice(1).map((v) => String(v ?? '').trim());
     const map: Record<string, number> = {};
+    // nosemgrep: ajinabraham.njsscan.dos.regex_dos.regex_dos -- fixed, anchored, backtracking-free header patterns
     for (const f of FIELDS[kind]) { const i = headers.findIndex((h, idx) => f.re.test(h) && !Object.values(map).includes(idx)); if (i >= 0) map[f.key] = i; }
     for (const f of FIELDS[kind]) if (f.required && map[f.key] === undefined) throw badRequest(`Column "${f.header}" not found`);
     const depts = await this.prisma.base.department.findMany();

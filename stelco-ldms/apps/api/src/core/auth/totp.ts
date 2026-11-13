@@ -15,7 +15,7 @@ export function otpauthUrl(username: string, secret: string): string {
  * Callers reject steps ≤ the last accepted step (no code reuse).
  */
 export function verifyTotp(code: string, secret: string, now = Date.now()): number | null {
-  if (!/^\d{6}$/.test(code)) return null;
+  if (code.length !== 6 || ![...code].every((c) => c >= '0' && c <= '9')) return null;
   const delta = authenticator.checkDelta(code, secret);
   if (delta === null) return null;
   return Math.floor(now / 1000 / 30) + delta;

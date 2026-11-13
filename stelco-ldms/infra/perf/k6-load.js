@@ -15,5 +15,6 @@ const pages = ['/api/my/work', '/api/matters?pageSize=25', '/api/litigation/case
 export default function () {
   for (const p of pages) check(http.get(`${BASE}${p}`, { headers, tags: { kind: 'list' } }), { ok: (r) => r.status === 200 });
   check(http.get(`${BASE}/api/search?q=contract`, { headers, tags: { kind: 'search' } }), { ok: (r) => r.status === 200 });
+  // nosemgrep: ajinabraham.njsscan.crypto.crypto_node.node_insecure_random_generator -- load-test think-time jitter, not security
   sleep(1 + Math.random() * 2);
 }

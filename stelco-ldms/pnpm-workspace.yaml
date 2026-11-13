@@ -9,3 +9,7 @@ onlyBuiltDependencies:
   - "@swc/core"
   - esbuild
   - msgpackr-extract
+# Supply-chain hardening
+blockExoticSubdeps: true
+minimumReleaseAge: 10080
+trustPolicy: no-downgrade

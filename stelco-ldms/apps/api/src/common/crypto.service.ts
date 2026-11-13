@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { config } from '../config';
 
+const GCM_TAG_BYTES = 16;
+
 /**
  * Field-level encryption (AES-256-GCM) with a keyring so keys can be rotated:
  * values are stored as `v1.<keyId>.<iv>.<tag>.<ciphertext>` (base64url).
@@ -29,7 +31,7 @@ export class CryptoService {
   encrypt(plain: string | null | undefined): string | null {
     if (plain === null || plain === undefined) return null;
     const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', this.keys.get(this.active)!, iv);
+    const cipher = createCipheriv('aes-256-gcm', this.keys.get(this.active)!, iv, { authTagLength: GCM_TAG_BYTES });
     const ct = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
     return ['v1', this.active, iv.toString('base64url'), cipher.getAuthTag().toString('base64url'), ct.toString('base64url')].join('.');
   }
@@ -39,8 +41,11 @@ export class CryptoService {
     const [v, keyId, iv, tag, ct] = value.split('.');
     const key = keyId ? this.keys.get(keyId) : undefined;
     if (v !== 'v1' || !key || !iv || !tag || ct === undefined) throw new Error('Unreadable encrypted value');
-    const d = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'));
-    d.setAuthTag(Buffer.from(tag, 'base64url'));
+    const tagBuf = Buffer.from(tag, 'base64url');
+    // Reject truncated tags: a short GCM tag makes forgeries feasible.
+    if (tagBuf.length !== GCM_TAG_BYTES) throw new Error('Unreadable encrypted value');
+    const d = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'), { authTagLength: GCM_TAG_BYTES });
+    d.setAuthTag(tagBuf);
     return Buffer.concat([d.update(Buffer.from(ct, 'base64url')), d.final()]).toString('utf8');
   }
 

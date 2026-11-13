@@ -80,7 +80,7 @@ The `clamav` container runs `freshclam`. Point it at an internal mirror (`Databa
 
 ```bash
 # 1. images (built by CI and pushed to the internal registry)
-export REGISTRY=registry.stelco.internal TAG=<release>
+export REGISTRY=registry.stelco.internal TAG=<release> SERVER_NAME=legal.stelco.com.mv
 # 2. database schema, RLS, triggers, grants
 docker compose -f infra/compose.prod.yml --profile migrate run --rm migrate
 # 3. reference data (departments, SLA targets, request types, templates, holidays — no demo users)
