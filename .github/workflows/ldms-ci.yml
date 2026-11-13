@@ -113,11 +113,14 @@ jobs:
           docker build -f infra/docker/api.Dockerfile --target api -t ldms-api:ci .
           docker build -f infra/docker/api.Dockerfile --target worker -t ldms-worker:ci .
           docker build -f infra/docker/web.Dockerfile -t ldms-web:ci .
+      # Trivy from its pinned official image (the trivy-action tag we pinned no longer resolves).
+      # Fails the build on fixable HIGH/CRITICAL vulnerabilities in any image we ship.
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with: { image-ref: "ldms-api:ci", severity: "HIGH,CRITICAL", ignore-unfixed: true, exit-code: "1" }
-      - uses: aquasecurity/trivy-action@0.28.0
-        with: { image-ref: "ldms-web:ci", severity: "HIGH,CRITICAL", ignore-unfixed: true, exit-code: "1" }
+        run: |
+          for img in ldms-api:ci ldms-worker:ci ldms-web:ci; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+              aquasec/trivy:0.76.2 image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress "$img"
+          done
       - name: SBOM
         uses: anchore/sbom-action@v0
         with: { image: "ldms-api:ci", format: spdx-json }
