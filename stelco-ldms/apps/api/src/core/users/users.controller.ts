@@ -43,7 +43,7 @@ export class UsersController {
   @Get()
   @Can('users:read', 'users:manage')
   list(@Query() query: unknown) {
-    const q = qrec(query);
+    const q = qrec(query, ['q', 'status', 'role', 'unit']);
     return this.users.list({ q: q.q?.slice(0, 100), status: q.status, role: q.role, unit: q.unit });
   }
 

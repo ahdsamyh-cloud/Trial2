@@ -8,12 +8,16 @@ export function qs(v: unknown, max = 200): string | undefined {
   return v.slice(0, max);
 }
 
-/** All values of a query object as single strings. Prototype-polluting keys are dropped. */
-export function qrec(q: unknown): Record<string, string> {
-  const out: Record<string, string> = Object.create(null);
-  for (const [k, v] of Object.entries((q ?? {}) as Record<string, unknown>)) {
-    if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
-    out[k] = qs(v, 500) ?? '';
+/**
+ * Named query parameters as single strings. Only the listed keys are read, so a
+ * request-supplied key never becomes a property name (no prototype pollution).
+ */
+export function qrec<K extends string>(q: unknown, keys: readonly K[]): Partial<Record<K, string>> {
+  const src = (q ?? {}) as Record<string, unknown>;
+  const out: Partial<Record<K, string>> = {};
+  for (const k of keys) {
+    const v = Object.prototype.hasOwnProperty.call(src, k) ? qs(src[k], 500) : undefined;
+    if (v !== undefined) out[k] = v;
   }
   return out;
 }

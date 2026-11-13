@@ -39,7 +39,7 @@ export class ComplianceController {
   @Get('laws')
   @Can('matter:read', 'cmp:write', 'portal:use')
   laws(@Query() query: unknown) {
-    const q = qrec(query);
+    const q = qrec(query, ['q', 'type', 'status', 'regulatorId']);
     return this.cmp.laws({ q: q.q?.slice(0, 100), type: q.type, status: q.status, regulatorId: q.regulatorId });
   }
 
@@ -71,7 +71,7 @@ export class ComplianceController {
   @Get('obligations')
   @Can('matter:read', 'cmp:write', 'portal:use')
   obligations(@Query() query: unknown) {
-    const q = qrec(query);
+    const q = qrec(query, ['lawId', 'departmentId', 'q']);
     return this.cmp.obligations({ lawId: q.lawId, departmentId: q.departmentId, q: q.q?.slice(0, 100) });
   }
 
@@ -137,7 +137,7 @@ export class ComplianceController {
   @Get('cycles')
   @Can('matter:read', 'cmp:write', 'portal:use')
   cycles(@Query() query: unknown) {
-    const q = qrec(query);
+    const q = qrec(query, ['status', 'departmentId']);
     return this.cmp.cycles({ status: q.status, departmentId: q.departmentId });
   }
 
@@ -180,7 +180,7 @@ export class ComplianceController {
   @Get('findings')
   @Can('matter:read', 'cmp:write', 'portal:use')
   findings(@Query() query: unknown) {
-    const q = qrec(query);
+    const q = qrec(query, ['status', 'departmentId', 'severity', 'overdue']);
     return this.cmp.findings({ status: q.status, departmentId: q.departmentId, severity: q.severity, overdue: q.overdue === 'true' });
   }
 

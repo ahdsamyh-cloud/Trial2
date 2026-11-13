@@ -98,10 +98,10 @@ describe('password policy', () => {
 });
 
 describe('query record helper', () => {
-  it('drops prototype-polluting keys and refuses arrays', () => {
-    const q = qrec(JSON.parse('{"__proto__":"x","constructor":"y","status":"OPEN"}'));
-    expect(Object.keys(q)).toEqual(['status']);
+  it('reads only the named keys and refuses arrays', () => {
+    const q = qrec(JSON.parse('{"__proto__":{"x":1},"constructor":"y","status":"OPEN","other":"z"}'), ['status', 'constructor'] as const);
+    expect(q).toEqual({ status: 'OPEN', constructor: 'y' });
     expect(({} as Record<string, unknown>).x).toBeUndefined();
-    expect(() => qrec({ a: ['1', '2'] })).toThrow();
+    expect(() => qrec({ a: ['1', '2'] }, ['a'])).toThrow();
   });
 });

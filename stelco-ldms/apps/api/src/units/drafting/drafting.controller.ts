@@ -102,7 +102,7 @@ export class DraftingController {
   @Get('contracts')
   @Can('matter:read')
   async contracts(@Query() query: unknown, @Res({ passthrough: true }) res: Response) {
-    const q = qrec(query);
+    const q = qrec(query, ['q', 'status', 'expiringDays', 'ownerDeptId', 'format']);
     const rows = await this.reg.contracts({ q: q.q?.slice(0, 100), status: q.status || undefined, expiringDays: q.expiringDays ? Number(q.expiringDays) : undefined, ownerDeptId: q.ownerDeptId });
     if (q.format === 'xlsx') {
       return this.exporter.send(res, 'contracts', [

@@ -27,7 +27,7 @@ export class CalendarController {
   @Get('ics')
   @Can('calendar:read')
   async ics(@Query() raw: unknown, @Res() res: Response) {
-    const query = qrec(raw);
+    const query = qrec(raw, ['ids', 'from', 'to']);
     const ids = query.ids ? query.ids.split(',').slice(0, 200) : null;
     const body = ids ? await this.calendar.ics(ids) : await this.calendar.ics('ALL', parse(q.pick({ from: true, to: true }), query));
     await this.audit.log({ action: 'calendar.ics', meta: { count: ids?.length ?? 'range' } });

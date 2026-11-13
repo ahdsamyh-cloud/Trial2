@@ -50,7 +50,7 @@ export class AwarenessController {
   @Get('sessions')
   @Authenticated()
   sessions(@Query() query: unknown) {
-    const q = qrec(query);
+    const q = qrec(query, ['from', 'to', 'status']);
     return this.awr.sessions({ from: q.from ? new Date(q.from) : undefined, to: q.to ? new Date(q.to) : undefined, status: q.status });
   }
 
