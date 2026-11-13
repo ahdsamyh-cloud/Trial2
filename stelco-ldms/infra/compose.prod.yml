@@ -87,12 +87,6 @@ services:
     volumes: [/srv/ldms/clamav:/var/lib/clamav]
     networks: [data, av-updates]
 
-  gotenberg:
-    image: gotenberg/gotenberg:8.15
-    <<: *hardening
-    tmpfs: ["/tmp"]
-    command: ["gotenberg", "--chromium-deny-list=^(?!file:///tmp/).*", "--api-timeout=60s"]
-    networks: [app]
 
 networks:
   dmz: {}

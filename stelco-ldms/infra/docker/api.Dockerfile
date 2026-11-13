@@ -31,7 +31,7 @@ CMD ["node", "dist/main.js"]
 # Worker: same code + text extraction / OCR tools. Runs with no inbound ports.
 FROM api AS worker
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils ocrmypdf tesseract-ocr tesseract-ocr-eng && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-eng && rm -rf /var/lib/apt/lists/*
 USER ldms
 HEALTHCHECK NONE
 CMD ["node", "dist/main.worker.js"]

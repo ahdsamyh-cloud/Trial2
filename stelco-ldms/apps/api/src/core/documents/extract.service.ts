@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -57,11 +57,19 @@ export class ExtractService {
     });
   }
 
+  /** OCR for scanned PDFs: rasterise pages with pdftoppm, then Tesseract each page (no shell, timeouts, page cap). */
   private ocrPdf(buf: Buffer) {
     return this.withTemp(buf, async (dir, file) => {
-      const out = join(dir, 'ocr.txt');
-      await run('ocrmypdf', ['--skip-text', '--pages', `1-${config().OCR_MAX_PAGES}`, '--sidecar', out, '-q', file, join(dir, 'out.pdf')], { timeout: 600_000 });
-      return readFile(out, 'utf8');
+      const pages = Math.max(1, config().OCR_MAX_PAGES);
+      await run('pdftoppm', ['-r', '200', '-gray', '-png', '-l', String(pages), file, join(dir, 'page')], { timeout: 300_000 });
+      const images = (await readdir(dir)).filter((f) => /^page-\d+\.png$/.test(f)).sort();
+      let text = '';
+      for (const img of images) {
+        const { stdout } = await run('tesseract', [join(dir, img), '-', '-l', 'eng', '--psm', '3'], { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 });
+        text += `${stdout}\n`;
+        if (text.length > MAX_TEXT) break;
+      }
+      return text;
     });
   }
 }

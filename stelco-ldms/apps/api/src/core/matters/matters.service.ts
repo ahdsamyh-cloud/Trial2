@@ -288,6 +288,15 @@ export class MattersService {
     return { ok: true };
   }
 
+  async remind(ids: string[], message?: string) {
+    const rows = await this.prisma.db.matter.findMany({ where: { AND: [{ id: { in: ids } }, this.policy.matterScope('matter:assign')] }, include: { assignments: true } });
+    for (const m of rows) {
+      await this.notifications.notify(m.assignments.map((a) => a.userId), { type: 'matter.reminder', title: `Reminder from ${currentUser().displayName}: ${m.reference}`, body: m.restricted ? undefined : message, link: `/matters/${m.id}`, matterId: m.id, restricted: m.restricted });
+    }
+    await this.audit.log({ action: 'matter.bulk-remind', meta: { count: rows.length } });
+    return { reminded: rows.length, skipped: ids.length - rows.length };
+  }
+
   /** Open items per lawyer in a unit, with the least-loaded suggested first. */
   async workload(unit: Unit) {
     if (!this.policy.covers('matter:read', unit)) throw notFound('Unit');

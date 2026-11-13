@@ -27,7 +27,7 @@ jobs:
         with: { version: 10.28.0 }
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm, cache-dependency-path: stelco-ldms/pnpm-lock.yaml }
-      - run: sudo apt-get update && sudo apt-get install -y poppler-utils postgresql-client
+      - run: sudo apt-get update && sudo apt-get install -y poppler-utils tesseract-ocr postgresql-client
       - run: pnpm install --frozen-lockfile
       - run: PGPASSWORD=dev_owner_pw psql -h localhost -U ldms_owner -d ldms_test -c "CREATE ROLE ldms_app LOGIN PASSWORD 'dev_app_pw'; ALTER ROLE ldms_owner CREATEDB;"
       - run: pnpm build:shared && pnpm --filter api prisma:generate

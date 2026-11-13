@@ -45,7 +45,6 @@ const schema = z.object({
   MAX_UPLOAD_MB: z.coerce.number().default(50),
   OCR_ENABLED: bool,
   OCR_MAX_PAGES: z.coerce.number().default(50),
-  GOTENBERG_URL: z.string().optional(),
   BREACHED_PASSWORDS_FILE: z.string().optional(),
   LOG_LEVEL: z.string().default('info'),
 });

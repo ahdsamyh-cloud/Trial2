@@ -18,6 +18,14 @@ import { ExtractService } from './documents/extract.service';
 import { StorageService } from './documents/storage.service';
 import { ExportService } from './export/export.service';
 import { HealthController } from './health.controller';
+import { DashboardController } from './dashboard/dashboard.controller';
+import { DashboardService } from './dashboard/dashboard.service';
+import { SearchController } from './search/search.controller';
+import { SearchService } from './search/search.service';
+import { ReportsController } from './reports/reports.controller';
+import { ReportsService } from './reports/reports.service';
+import { ImportsController } from './imports/imports.controller';
+import { ImportsService } from './imports/imports.service';
 import { IntakeController, PortalController } from './intake/intake.controller';
 import { IntakeService } from './intake/intake.service';
 import { JobsService } from './jobs/jobs.service';
@@ -35,14 +43,14 @@ import { UsersService } from './users/users.service';
 const providers = [
   PrismaService, CryptoService, AuditService, AuthService, SessionService, AuthGuard, CalendarService, SettingsService, AvService,
   DocumentsService, ExtractService, StorageService, ExportService, IntakeService, JobsService, MattersService, ReferenceService,
-  NotificationsService, SecurityAlerts, PolicyService, SlaService, UsersService,
+  NotificationsService, SecurityAlerts, PolicyService, SlaService, UsersService, DashboardService, SearchService, ReportsService, ImportsService,
 ];
 
 @Global()
 @Module({
   controllers: [
     HealthController, AuthController, UsersController, AuditController, ConfigController, NotificationsController, DocumentsController,
-    CalendarController, IntakeController, PortalController, MattersController, MyWorkController,
+    CalendarController, IntakeController, PortalController, MattersController, MyWorkController, DashboardController, SearchController, ReportsController, ImportsController,
   ],
   providers,
   exports: providers,

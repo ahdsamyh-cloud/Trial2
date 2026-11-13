@@ -83,6 +83,15 @@ export class MattersController {
     return { results };
   }
 
+  /** Bulk: remind the people assigned to the selected matters. */
+  @Post('bulk/remind')
+  @Can('matter:assign')
+  @HttpCode(200)
+  async bulkRemind(@Body() body: unknown) {
+    const b = parse(z.object({ matterIds: z.array(z.string().max(40)).min(1).max(200), message: z.string().trim().max(500).optional() }).strict(), body);
+    return this.matters.remind(b.matterIds, b.message);
+  }
+
   @Get(':id')
   @Can('matter:read', 'portal:use')
   detail(@Param('id') id: string) {
