@@ -1,0 +1,11 @@
+{
+  "name": "STELCO Legal (LDMS)",
+  "short_name": "LDMS",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#124a8f",
+  "icons": [
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -1,0 +1,126 @@
+name: LDMS CI
+on:
+  push: { paths: ["stelco-ldms/**", ".github/workflows/ldms-*.yml"] }
+  pull_request: { paths: ["stelco-ldms/**"] }
+permissions: { contents: read }
+defaults: { run: { working-directory: stelco-ldms } }
+concurrency:
+  group: ldms-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      # Postgres is started in a step instead (below) so its passwords can be random per run.
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+      clamav:
+        image: clamav/clamav:1.4
+        ports: ["3310:3310"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.28.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: stelco-ldms/pnpm-lock.yaml }
+      - run: sudo apt-get update && sudo apt-get install -y poppler-utils tesseract-ocr postgresql-client
+      - run: pnpm install --frozen-lockfile
+      # SECURITY: no credentials in the repository. Every DB password, demo login, TOTP secret and
+      # key used by the test run is generated here, masked in logs, and lives only for this job.
+      - name: Generate per-run test secrets
+        run: |
+          PG_OWNER=$(openssl rand -hex 24); PG_APP=$(openssl rand -hex 24)
+          DEMO_PASSWORD="ci-$(openssl rand -hex 16)"
+          DEMO_TOTP_SECRET=$(head -c 20 /dev/urandom | base32 | tr -d '=\n')
+          K1=$(openssl rand -base64 32); K0=$(openssl rand -base64 32); SIGNING_KEY=$(openssl rand -base64 48 | tr -d '\n')
+          for v in "$PG_OWNER" "$PG_APP" "$DEMO_PASSWORD" "$DEMO_TOTP_SECRET" "$K1" "$K0" "$SIGNING_KEY"; do echo "::add-mask::$v"; done
+          {
+            echo "PG_OWNER=$PG_OWNER"; echo "PG_APP=$PG_APP"
+            echo "DATABASE_URL=postgresql://ldms_app:$PG_APP@localhost:5432/ldms_test"
+            echo "MIGRATION_DATABASE_URL=postgresql://ldms_owner:$PG_OWNER@localhost:5432/ldms_test"
+            echo "DEMO_PASSWORD=$DEMO_PASSWORD"; echo "DEMO_TOTP_SECRET=$DEMO_TOTP_SECRET"
+            echo "FIELD_KEYS=k1:$K1,k0:$K0"; echo "FIELD_KEY_ACTIVE=k1"; echo "SIGNING_KEY=$SIGNING_KEY"
+          } >> "$GITHUB_ENV"
+      - name: Start Postgres
+        run: |
+          docker run -d --name pg -p 5432:5432 -e POSTGRES_USER=ldms_owner -e POSTGRES_PASSWORD="$PG_OWNER" -e POSTGRES_DB=ldms_test postgres:17-alpine
+          for i in $(seq 1 30); do docker exec pg pg_isready -U ldms_owner -d ldms_test && break; sleep 2; done
+          # psql variables (:'app_pw') quote the password safely; they only expand in script input, hence stdin.
+          printf "%s\n" "CREATE ROLE ldms_app LOGIN PASSWORD :'app_pw';" "ALTER ROLE ldms_owner CREATEDB;" |
+            PGPASSWORD="$PG_OWNER" psql -h localhost -U ldms_owner -d ldms_test -v ON_ERROR_STOP=1 -v app_pw="$PG_APP"
+      - run: pnpm build:shared && pnpm --filter api prisma:generate
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Wait for ClamAV
+        run: for i in $(seq 1 60); do printf 'zPING\0' | nc -w2 localhost 3310 | grep -q PONG && exit 0; sleep 5; done; exit 1
+      - run: pnpm test:int
+      - name: Build
+        run: pnpm --filter api build && pnpm --filter web build
+      - name: E2E (Playwright)
+        env: { NODE_ENV: development, APP_ORIGIN: "http://localhost:3000", STORAGE_FS_ROOT: /tmp/ldms-ci, QUEUE_INLINE: "true", SEED_DEMO: "true" }
+        run: |
+          npx --yes playwright@1.63.0 install --with-deps chromium
+          (cd apps/api && DATABASE_URL=$MIGRATION_DATABASE_URL npx prisma migrate deploy && DATABASE_URL=$MIGRATION_DATABASE_URL node scripts/apply-sql.js && DATABASE_URL=$MIGRATION_DATABASE_URL node -r @swc-node/register prisma/seed.ts)
+          (cd apps/api && node dist/main.js &) ; (cd apps/web && API_INTERNAL_URL=http://localhost:4000 npx next start -p 3000 &)
+          sleep 8 && pnpm --filter web test:e2e
+
+  security:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, security-events: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Secret scanning (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.28.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Dependency audit
+        run: pnpm install --frozen-lockfile && pnpm audit --prod --audit-level high
+      - name: Semgrep SAST
+        # Pinned official image: the pipx install on current runners lacks pkg_resources and crashes on import.
+        # The excluded njsscan 'good' rules are informational (they report helmet headers that ARE present).
+        run: >-
+          docker run --rm -e SEMGREP_SEND_METRICS=off -v "$PWD:/src" semgrep/semgrep:1.99.0
+          semgrep scan --config p/owasp-top-ten --config p/typescript --config p/nodejsscan
+          --metrics=off --error --exclude node_modules --exclude .next --exclude dist
+          --exclude-rule ajinabraham.njsscan.good.good_helmet_checks.helmet_header_x_powered_by
+          --exclude-rule ajinabraham.njsscan.good.good_helmet_checks.helmet_header_check_csp
+          --exclude-rule ajinabraham.njsscan.good.good_helmet_checks.helmet_header_hsts
+          --exclude-rule ajinabraham.njsscan.good.good_helmet_checks.helmet_header_referrer_policy
+          /src
+
+  codeql:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, security-events: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with: { languages: javascript-typescript, queries: security-extended }
+      - uses: github/codeql-action/analyze@v3
+
+  images:
+    runs-on: ubuntu-24.04
+    needs: [test, security]
+    permissions: { contents: read, security-events: write }
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          docker build -f infra/docker/api.Dockerfile --target api -t ldms-api:ci .
+          docker build -f infra/docker/api.Dockerfile --target worker -t ldms-worker:ci .
+          docker build -f infra/docker/web.Dockerfile -t ldms-web:ci .
+      # Trivy from its pinned official image (the trivy-action tag we pinned no longer resolves).
+      # Fails the build on fixable HIGH/CRITICAL vulnerabilities in any image we ship.
+      - name: Trivy image scan
+        run: |
+          for img in ldms-api:ci ldms-worker:ci ldms-web:ci; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/trivy" \
+              aquasec/trivy:0.76.2 image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress "$img"
+          done
+      - name: SBOM
+        uses: anchore/sbom-action@v0
+        with: { image: "ldms-api:ci", format: spdx-json }

@@ -1,0 +1,37 @@
+{
+  "name": "stelco-ldms",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "setup:env": "node scripts/setup-env.mjs",
+    "setup:db": "pnpm build:shared && pnpm --filter api prisma:generate && pnpm --filter api db:setup",
+    "dev": "node scripts/dev.mjs",
+    "start": "node scripts/dev.mjs",
+    "demo:code": "pnpm --filter api demo:code",
+    "build": "pnpm -r --filter ./packages/** build && pnpm --filter api build && pnpm --filter web build",
+    "build:shared": "pnpm --filter @ldms/shared build",
+    "dev:api": "pnpm --filter api dev",
+    "dev:worker": "pnpm --filter api dev:worker",
+    "dev:web": "pnpm --filter web dev",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "test:int": "pnpm --filter api test:int",
+    "test:e2e": "pnpm --filter web test:e2e",
+    "e2e:install": "pnpm --filter web exec playwright install chromium",
+    "db:migrate": "pnpm --filter api prisma:migrate",
+    "db:seed": "pnpm --filter api seed"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss@<8.5.32": "8.5.32",
+      "fast-xml-parser@<5.12.0": "5.12.0",
+      "linkify-it@<5.0.2": "5.0.2",
+      "uuid@<11.1.1": "11.1.1",
+      "deepmerge-ts@<8.0.0": "8.0.2"
+    }
+  }
+}

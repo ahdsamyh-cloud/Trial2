@@ -1,0 +1,6 @@
+title = "gitleaks config"
+[extend]
+useDefault = true
+[allowlist]
+description = "Test-only fixtures (fake keys, demo TOTP secret)"
+paths = ['''stelco-ldms/apps/api/\.env\.ci''', '''stelco-ldms/apps/api/test/setup-env\.ts''', '''stelco-ldms/apps/web/e2e/helpers\.ts''']
