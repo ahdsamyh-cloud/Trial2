@@ -6,6 +6,11 @@
     "node": ">=22"
   },
   "scripts": {
+    "setup:env": "node scripts/setup-env.mjs",
+    "setup:db": "pnpm build:shared && pnpm --filter api prisma:generate && pnpm --filter api db:setup",
+    "dev": "node scripts/dev.mjs",
+    "start": "node scripts/dev.mjs",
+    "demo:code": "pnpm --filter api demo:code",
     "build": "pnpm -r --filter ./packages/** build && pnpm --filter api build && pnpm --filter web build",
     "build:shared": "pnpm --filter @ldms/shared build",
     "dev:api": "pnpm --filter api dev",

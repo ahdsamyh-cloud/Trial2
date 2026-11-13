@@ -3,14 +3,15 @@
 Each phase was built, tested and committed separately on branch `ccr-9aa81935-1rrvtk`. Open questions from `PLAN.md` §11 used their stated defaults unless noted.
 
 ## How to run (all phases)
+Works the same in Windows Command Prompt/PowerShell, macOS and Linux (needs Node 22, pnpm 10.28 and Docker Desktop):
 ```bash
-cd stelco-ldms && pnpm install && pnpm build:shared && pnpm --filter api prisma:generate
-cp infra/.env.dev.example infra/.env   # fill with random values: openssl rand -hex 24
-docker compose -f infra/compose.dev.yml up -d            # or local postgres/redis/clamd
-cp .env.example apps/api/.env  # then fill in dev values (FIELD_KEYS, SIGNING_KEY, DB URLs, SEED_DEMO=true, DEMO_*)
-cd apps/api && DATABASE_URL=$MIGRATION_DATABASE_URL npx prisma migrate deploy && DATABASE_URL=$MIGRATION_DATABASE_URL node scripts/apply-sql.js \
-  && DATABASE_URL=$MIGRATION_DATABASE_URL pnpm seed && pnpm build && pnpm start:local      # API :4000
-cd ../web && pnpm build && API_INTERNAL_URL=http://localhost:4000 pnpm start               # web :3000
+cd stelco-ldms
+pnpm install
+pnpm setup:env                                   # random local secrets -> infra/.env + apps/api/.env; prints demo login
+docker compose -f infra/compose.dev.yml up -d    # Postgres, Redis, ClamAV, MinIO, Mailpit
+pnpm setup:db                                    # migrations + RLS/triggers + seed (demo users)
+pnpm dev                                         # API :4000 + web :3000  ->  http://localhost:3000
+pnpm demo:code                                   # current 6-digit sign-in code for the demo users
 ```
 Demo users all share `DEMO_PASSWORD` and the TOTP secret `DEMO_TOTP_SECRET` (dev only). See `CLAUDE.md`.
 

@@ -11,11 +11,11 @@ Read `docs/PLAN.md` for the approved architecture and `docs/PHASE-REPORTS.md` fo
 ## Commands
 ```bash
 pnpm install
-pnpm build:shared && pnpm --filter api prisma:generate
-# dev services: cp infra/.env.dev.example infra/.env (random values) && docker compose -f infra/compose.dev.yml up -d
-cd apps/api && DATABASE_URL=$MIGRATION_DATABASE_URL npx prisma migrate deploy && DATABASE_URL=$MIGRATION_DATABASE_URL node scripts/apply-sql.js
-cd apps/api && DATABASE_URL=$MIGRATION_DATABASE_URL pnpm seed            # SEED_DEMO=true for demo users
-pnpm dev:api   # :4000      pnpm dev:worker      pnpm dev:web   # :3000
+pnpm setup:env       # once: random local secrets -> infra/.env + apps/api/.env (cross-platform, never overwrites)
+docker compose -f infra/compose.dev.yml up -d
+pnpm setup:db        # build shared + prisma generate + migrate + apply SQL + seed (apps/api/scripts/dev-setup.js)
+pnpm dev             # API :4000 + web :3000 (scripts/dev.mjs); or pnpm dev:api / dev:web / dev:worker separately
+pnpm demo:code       # current TOTP code for demo users (dev only)
 pnpm test            # unit (shared + api/src)
 pnpm test:int        # API integration (real Postgres ldms_test, Redis db 5, clamd with EICAR sig); DB URLs from env or apps/api/.env.test
 pnpm --filter web test:e2e   # Playwright; needs API + web running against a seeded DB

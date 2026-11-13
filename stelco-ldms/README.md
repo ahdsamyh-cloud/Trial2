@@ -13,4 +13,42 @@ A secure, on-premises web app for STELCO's Legal Department, covering Litigation
 
 **Stack:** Next.js (App Router, BFF proxy, nonce CSP) · NestJS + BullMQ worker · PostgreSQL 17 + Prisma + row-level security · Redis · S3-compatible storage · ClamAV · Tesseract OCR · Docker Compose behind Nginx + ModSecurity CRS.
 
-**Quick start (dev):** see `docs/PHASE-REPORTS.md` → *How to run*.
+## Quick start (local development: Windows, macOS or Linux)
+
+This project uses **pnpm** (not npm) and needs PostgreSQL, Redis and ClamAV, which run in Docker.
+
+**Install once:**
+- [Node.js 22 LTS](https://nodejs.org/)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/), started before you continue.
+- pnpm: `npm install -g pnpm@10.28.0`
+
+**Then, in this folder (`stelco-ldms`), in Command Prompt, PowerShell or a terminal:**
+
+```bat
+pnpm install
+pnpm setup:env
+docker compose -f infra/compose.dev.yml up -d
+pnpm setup:db
+pnpm dev
+```
+
+| Command | What it does |
+|---|---|
+| `pnpm install` | Installs all dependencies. |
+| `pnpm setup:env` | Creates `infra/.env` and `apps/api/.env` with random local passwords and keys. It prints the demo password and the TOTP secret. |
+| `docker compose -f infra/compose.dev.yml up -d` | Starts Postgres, Redis, ClamAV, MinIO and Mailpit. |
+| `pnpm setup:db` | Migrates the database and seeds reference data and demo users. |
+| `pnpm dev` | Starts the API on :4000 and the web app on :3000. Ctrl+C stops both. `pnpm start` does the same. |
+
+**Signing in:**
+1. Open **http://localhost:3000**.
+2. Sign in as **`hod`**, **`adm.it`** or another demo user (full list in `CLAUDE.md`). Use the demo password that `pnpm setup:env` printed.
+3. For the 6-digit code, run `pnpm demo:code`, or add the TOTP secret to an authenticator app. Each code works only once. If it is refused, wait for the next 30-second window.
+
+**Good to know:**
+- Emails go to Mailpit at http://localhost:8025.
+- ClamAV needs a few minutes on first start to download its signatures. Uploads are refused until it is ready.
+- Run `pnpm setup:env` again any time to see the demo credentials. It never overwrites existing files.
+- Stop the services with `docker compose -f infra/compose.dev.yml down`. Add `-v` to also delete the data.
+
+For production, see `docs/IT_SETUP.md`. Do not use the development setup on a server.
