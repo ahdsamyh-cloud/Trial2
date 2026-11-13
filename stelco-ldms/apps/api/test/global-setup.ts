@@ -12,9 +12,11 @@ export default async function setup() {
   await c.query('DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;');
   await c.end();
   const env = { ...process.env, DATABASE_URL: owner };
-  execFileSync('npx', ['prisma', 'migrate', 'deploy'], { cwd: root, env, stdio: 'pipe' });
-  execFileSync('node', ['scripts/apply-sql.js'], { cwd: root, env, stdio: 'pipe' });
-  execFileSync('node', ['-r', '@swc-node/register', 'prisma/seed.ts'], { cwd: root, env, stdio: 'pipe' });
+  // process.execPath + resolved CLI paths (not `npx`/`node` by name) so this also works on Windows.
+  const node = process.execPath;
+  execFileSync(node, [require.resolve('prisma/build/index.js'), 'migrate', 'deploy'], { cwd: root, env, stdio: 'pipe' });
+  execFileSync(node, [join('scripts', 'apply-sql.js')], { cwd: root, env, stdio: 'pipe' });
+  execFileSync(node, ['-r', '@swc-node/register', join('prisma', 'seed.ts')], { cwd: root, env, stdio: 'pipe' });
   const IORedis = (await import('ioredis')).default;
   const r = new IORedis(process.env.REDIS_URL!);
   await r.flushdb();

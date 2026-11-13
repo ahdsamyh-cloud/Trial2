@@ -10,7 +10,10 @@ export function middleware(req: NextRequest) {
   const csp = [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${dev ? " 'unsafe-eval'" : ''}`,
-    `style-src 'self' 'nonce-${nonce}'`,
+    // Production: nonce only (no inline styles). `next dev` injects its own inline <style>/style= for the
+    // dev overlay and hot reload, so development alone allows them. A nonce would make browsers ignore
+    // 'unsafe-inline', hence no nonce in that dev-only branch.
+    dev ? "style-src 'self' 'unsafe-inline'" : `style-src 'self' 'nonce-${nonce}'`,
     "img-src 'self' data: blob:",
     "font-src 'self'",
     `connect-src 'self'${dev ? ' ws:' : ''}`,

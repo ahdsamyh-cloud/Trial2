@@ -51,4 +51,6 @@ pnpm dev
 - Run `pnpm setup:env` again any time to see the demo credentials. It never overwrites existing files.
 - Stop the services with `docker compose -f infra/compose.dev.yml down`. Add `-v` to also delete the data.
 
+**Testing:** see [`docs/TESTING.md`](docs/TESTING.md) for the automated tests (`pnpm test`, `pnpm test:int`, `pnpm test:e2e`) and a step-by-step manual checklist for each unit.
+
 For production, see `docs/IT_SETUP.md`. Do not use the development setup on a server.

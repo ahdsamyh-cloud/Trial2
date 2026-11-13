@@ -9,6 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const envFile = join(__dirname, '..', '.env.test');
 if (existsSync(envFile)) process.loadEnvFile(envFile);
@@ -35,7 +36,7 @@ process.env.FIELD_KEYS ??= `k1:${randomBytes(32).toString('base64')},k0:${random
 process.env.FIELD_KEY_ACTIVE ??= 'k1';
 process.env.SIGNING_KEY ??= randomBytes(48).toString('base64');
 process.env.STORAGE_DRIVER = 'fs';
-process.env.STORAGE_FS_ROOT ??= '/tmp/ldms-test-storage';
+process.env.STORAGE_FS_ROOT ??= join(tmpdir(), 'ldms-test-storage');
 process.env.AV_MODE ??= 'clamd';
 process.env.QUEUE_INLINE = 'true';
 process.env.SMTP_ENABLED = 'false';
@@ -46,3 +47,6 @@ process.env.SEED_DEMO = 'true';
 process.env.DEMO_PASSWORD ??= `test-${randomBytes(18).toString('base64url')}`;
 process.env.DEMO_TOTP_SECRET ??= b32(randomBytes(20));
 process.env.OCR_ENABLED = 'false';
+// Prisma auto-loads apps/api/.env and fills any variable not set here, so set the log level explicitly
+// (TEST_LOG_LEVEL=debug to see API logs while debugging a test).
+process.env.LOG_LEVEL = process.env.TEST_LOG_LEVEL ?? 'silent';

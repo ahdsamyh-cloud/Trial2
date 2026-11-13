@@ -1,4 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+
+// Local runs: pick up DEMO_PASSWORD / DEMO_TOTP_SECRET from the git-ignored apps/api/.env created by
+// `pnpm setup:env` (variables already set in the environment, e.g. in CI, take precedence).
+const apiEnv = join(__dirname, '..', 'api', '.env');
+if (existsSync(apiEnv)) process.loadEnvFile(apiEnv);
 
 /** E2E against a running web (3000) + API (4000) seeded with demo data (SEED_DEMO=true). */
 export default defineConfig({
