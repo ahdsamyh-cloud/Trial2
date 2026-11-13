@@ -8,10 +8,13 @@ export function qs(v: unknown, max = 200): string | undefined {
   return v.slice(0, max);
 }
 
-/** All values of a query object as single strings. */
+/** All values of a query object as single strings. Prototype-polluting keys are dropped. */
 export function qrec(q: unknown): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries((q ?? {}) as Record<string, unknown>)) out[k] = qs(v, 500) ?? '';
+  const out: Record<string, string> = Object.create(null);
+  for (const [k, v] of Object.entries((q ?? {}) as Record<string, unknown>)) {
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+    out[k] = qs(v, 500) ?? '';
+  }
   return out;
 }
 

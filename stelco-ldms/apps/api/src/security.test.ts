@@ -5,6 +5,7 @@ import { CryptoService } from './common/crypto.service';
 import { canonicalize } from './core/audit/audit.service';
 import { safeCell } from './core/export/export.service';
 import { checkPassword } from './core/auth/passwords';
+import { qrec } from './common/zod';
 
 function zip(entries: string[]): Buffer {
   // Minimal stored ZIP (no compression) with given entry names.
@@ -93,5 +94,14 @@ describe('password policy', () => {
     expect(checkPassword('password1234')).not.toEqual([]);
     expect(checkPassword('Welcome2026!')).not.toEqual([]);
     expect(checkPassword('a long and unusual passphrase')).toEqual([]);
+  });
+});
+
+describe('query record helper', () => {
+  it('drops prototype-polluting keys and refuses arrays', () => {
+    const q = qrec(JSON.parse('{"__proto__":"x","constructor":"y","status":"OPEN"}'));
+    expect(Object.keys(q)).toEqual(['status']);
+    expect(({} as Record<string, unknown>).x).toBeUndefined();
+    expect(() => qrec({ a: ['1', '2'] })).toThrow();
   });
 });
