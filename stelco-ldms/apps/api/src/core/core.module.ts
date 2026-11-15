@@ -23,6 +23,7 @@ import { DashboardService } from './dashboard/dashboard.service';
 import { SearchController } from './search/search.controller';
 import { SearchService } from './search/search.service';
 import { ReportsController } from './reports/reports.controller';
+import { ReportTemplatesService } from './reports/report-templates.service';
 import { ReportsService } from './reports/reports.service';
 import { ImportsController } from './imports/imports.controller';
 import { ImportsService } from './imports/imports.service';
@@ -45,7 +46,7 @@ import { UsersService } from './users/users.service';
 const providers = [
   PrismaService, CryptoService, AuditService, AuthService, SessionService, AuthGuard, CalendarService, SettingsService, AvService,
   DocumentsService, ExtractService, StorageService, ExportService, IntakeService, JobsService, MattersService, ReferenceService,
-  NotificationsService, SecurityAlerts, PolicyService, SlaService, UsersService, DashboardService, SearchService, ReportsService, ImportsService, RetentionService,
+  NotificationsService, SecurityAlerts, PolicyService, SlaService, UsersService, DashboardService, SearchService, ReportsService, ReportTemplatesService, ImportsService, RetentionService,
 ];
 
 @Global()

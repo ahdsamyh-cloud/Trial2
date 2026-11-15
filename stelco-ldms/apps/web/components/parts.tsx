@@ -103,23 +103,33 @@ export function DocumentsPanel({ ownerType, ownerId, canWrite = true, docTypes, 
   );
 }
 
-export function Comments({ matterId, comments, onPosted, portal }: { matterId: string; comments: { id: string; body: string | null; authorName: string; createdAt: string; internal: boolean }[]; onPosted: () => void; portal?: boolean }) {
+export function Comments({ matterId, comments, onPosted, portal, byVersion }: {
+  matterId: string; comments: { id: string; body: string | null; authorName: string; createdAt: string; internal: boolean; versionId?: string | null }[];
+  onPosted: () => void; portal?: boolean;
+  /** Drafting/policy review: let comments refer to one version of one of the matter's documents. */
+  byVersion?: boolean;
+}) {
   const [body, setBody] = useState('');
   const [internal, setInternal] = useState(!portal);
+  const [versionId, setVersionId] = useState('');
+  const docs = useApi<DocRow[]>(byVersion ? `/documents?ownerType=matter&ownerId=${encodeURIComponent(matterId)}` : null, [byVersion, comments.length]);
+  const versions = (docs.data ?? []).flatMap((d) => d.versions.map((v) => ({ id: v.id, label: `${d.title} · v${v.versionNo}${v.stageLabel ? ` (${label(v.stageLabel)})` : ''} · ${v.filename}` })));
+  const versionLabel = (id?: string | null) => (id ? versions.find((v) => v.id === id)?.label ?? t('an earlier version') : null);
   const act = useAction();
   return (
     <Card title={t('Comments and notes')}>
       <ul className="space-y-3">
         {comments.map((c) => (
           <li key={c.id} className={`rounded-md border p-3 text-sm ${c.internal ? 'border-amber-200 bg-amber-50' : 'border-slate-200'}`}>
-            <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-slate-500"><span className="font-medium text-slate-700">{c.authorName}</span>{fmtDateTime(c.createdAt)}{c.internal ? <Badge tone="amber">{t('Internal')}</Badge> : null}</div>
+            <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-slate-500"><span className="font-medium text-slate-700">{c.authorName}</span>{fmtDateTime(c.createdAt)}{c.internal ? <Badge tone="amber">{t('Internal')}</Badge> : null}{c.versionId ? <Badge tone="blue">{t('On {v}', { v: versionLabel(c.versionId) ?? '' })}</Badge> : null}</div>
             <p className="whitespace-pre-wrap">{c.body}</p>
           </li>
         ))}
         {!comments.length ? <Empty>{t('No comments yet')}</Empty> : null}
       </ul>
-      <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); void act.run(async () => { await api.post(`/matters/${matterId}/comments`, { body, internal }); setBody(''); onPosted(); }); }}>
+      <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); void act.run(async () => { await api.post(`/matters/${matterId}/comments`, { body, internal, ...(versionId ? { versionId } : {}) }); setBody(''); onPosted(); }); }}>
         {act.error ? <Alert>{act.error}</Alert> : null}
+        {byVersion && versions.length ? <Field label={t('About document version (optional)')}>{(id) => <Select id={id} placeholder={t('The request in general')} value={versionId} onChange={(e) => setVersionId(e.target.value)} options={versions.map((v) => ({ value: v.id, label: v.label }))} />}</Field> : null}
         <Field label={t('Add a comment')} hint={portal ? undefined : t('Use @username to mention a colleague.')}>{(id) => <Textarea id={id} value={body} onChange={(e) => setBody(e.target.value)} required />}</Field>
         <div className="flex flex-wrap items-center justify-between gap-2">
           {!portal ? <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} />{t('Internal note (hidden from requester)')}</label> : <span />}

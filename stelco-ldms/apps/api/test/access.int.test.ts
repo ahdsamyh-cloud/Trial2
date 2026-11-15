@@ -97,9 +97,16 @@ describe('record-level access, restricted matters, RLS', () => {
     expect((await (await as('mgmt')).get(`/matters/${open}`)).status).toBe(403);
   });
 
-  it('officers edit only matters assigned to them; maker-checker on assignment', async () => {
+  it('officers edit matters of their unit (HoD setting); maker-checker on assignment', async () => {
     const lo = await as('lo.cmp1');
-    expect((await lo.patch(`/matters/${open}`, { title: 'Edited by unassigned officer' })).status).toBe(403);
+    // Default (access.officersEditAnyMatter = true): any officer of the unit may edit, and it is audited.
+    expect((await lo.patch(`/matters/${open}`, { title: 'Edited by unassigned officer' })).status).toBe(200);
+    expect((await (await as('lo.lit1')).patch(`/matters/${open}`, { title: 'Other unit' })).status).toBe(404); // other unit: still out of scope
+    const hod = await as('hod');
+    expect((await hod.put('/config/settings/access.officersEditAnyMatter', { value: false })).status).toBe(200);
+    expect((await lo.patch(`/matters/${open}`, { title: 'Edited by unassigned officer again' })).status).toBe(403);
+    expect((await hod.put('/config/settings/access.officersEditAnyMatter', { value: true })).status).toBe(200);
+    await hod.put('/config/settings/access.officersEditAnyMatter', { value: false });
     const uh = await as('uh.cmp');
     const bad = await uh.post(`/matters/${open}/assign`, { assigneeIds: [await userId('lo.cmp1')], reviewerId: await userId('lo.cmp1') });
     expect(bad.status).toBe(400);
@@ -107,6 +114,7 @@ describe('record-level access, restricted matters, RLS', () => {
     expect((await lo.patch(`/matters/${open}`, { title: 'Edited by assigned officer' })).status).toBe(200);
     expect((await (await as('lo.lit1')).post(`/matters/${open}/assign`, { assigneeIds: [await userId('lo.lit1')] })).status).toBe(403);
     expect((await (await as('uh.lit')).post(`/matters/${open}/assign`, { assigneeIds: [await userId('lo.lit1')] })).status).toBe(404);
+    expect((await hod.put('/config/settings/access.officersEditAnyMatter', { value: true })).status).toBe(200);
   });
 
   it('every route declares a permission or is explicitly public (deny by default)', () => {

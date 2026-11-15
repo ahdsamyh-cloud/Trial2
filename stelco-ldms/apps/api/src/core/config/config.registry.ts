@@ -50,6 +50,8 @@ export const SETTINGS: Record<string, ZodTypeAny> = {
   'drafting.hodRules': z.object({ enabled: z.boolean(), minContractValue: z.number().nullable(), restricted: z.boolean(), requestTypeCodes: z.array(z.string()) }),
   'documents.watermarkPdf': z.boolean(),
   'intake.ackTemplateCode': z.string().max(40),
+  'access.officersEditAnyMatter': z.boolean(),
+  'compliance.reminderDays': z.number().int().min(1).max(90),
   'encryption.fields': z.array(z.string()),
 };
 
@@ -61,5 +63,7 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   'drafting.hodRules': { enabled: false, minContractValue: null, restricted: false, requestTypeCodes: [] },
   'documents.watermarkPdf': false,
   'intake.ackTemplateCode': 'INTAKE_ACK',
+  'access.officersEditAnyMatter': true,
+  'compliance.reminderDays': 7,
   'encryption.fields': ['Outcome.amount', 'LitigationCase.exposure', 'Matter.description(restricted)', 'Comment.body(restricted)', 'MfaFactor.secret'],
 };

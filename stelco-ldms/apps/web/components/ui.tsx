@@ -55,9 +55,10 @@ const width = (c?: string) => (c && /(^|\s)(sm:|md:|lg:)?w-/.test(c) ? '' : 'w-f
 // This is a usability guard only; the API's zod schemas are the security boundary.
 const INPUT_MAX = 2000;
 const TEXTAREA_MAX = 100000;
-export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, maxLength, ...p }, ref) => <input ref={ref} maxLength={maxLength ?? INPUT_MAX} className={clsx(fieldCls, width(className), className)} {...p} />);
+// dir="auto": a field typed in Dhivehi (Thaana) runs right-to-left, English left-to-right.
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, maxLength, ...p }, ref) => <input ref={ref} dir="auto" maxLength={maxLength ?? INPUT_MAX} className={clsx(fieldCls, width(className), className)} {...p} />);
 Input.displayName = 'Input';
-export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, maxLength, ...p }, ref) => <textarea ref={ref} maxLength={maxLength ?? TEXTAREA_MAX} className={clsx(fieldCls, 'min-h-[90px]', width(className), className)} {...p} />);
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, maxLength, ...p }, ref) => <textarea ref={ref} dir="auto" maxLength={maxLength ?? TEXTAREA_MAX} className={clsx(fieldCls, 'min-h-[90px]', width(className), className)} {...p} />);
 Textarea.displayName = 'Textarea';
 export function Select({ className, options, placeholder, ...p }: SelectHTMLAttributes<HTMLSelectElement> & { options: { value: string; label: string }[]; placeholder?: string }) {
   return (
@@ -129,14 +130,18 @@ export function Spinner() {
 
 export function Modal({ open, title, onClose, children, footer, wide }: { open: boolean; title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  // Keep the latest onClose without re-running the effect: callers pass a new arrow function on every
+  // render, and re-running the effect moved the cursor back to the first field after EVERY keystroke.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
     ref.current?.querySelector<HTMLElement>('input,select,textarea,button')?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeRef.current(); };
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('keydown', onKey); prev?.focus(); };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>

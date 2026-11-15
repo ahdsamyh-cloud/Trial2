@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { LITIGATION_STATUSES } from '@ldms/shared';
 import { Can } from '../../common/decorators';
 import { badRequest } from '../../common/errors';
-import { money, pageQuery, parse, qs } from '../../common/zod';
+import { money, pageQuery, parse, qs, updatable } from '../../common/zod';
 import { ExportService } from '../../core/export/export.service';
 import { CASE_TYPES, LitigationService, OUR_ROLES } from './litigation.service';
 import { LIT_FIELDS, LitigationImportService } from './import.service';
@@ -60,7 +60,7 @@ export class LitigationController {
   @Patch('cases/:id')
   @Can('lit:write')
   update(@Param('id') caseId: string, @Body() body: unknown) {
-    return this.lit.update(caseId, parse(caseSchema.partial().omit({ status: true, restricted: true, parties: true }).strict(), body));
+    return this.lit.update(caseId, parse(updatable(caseSchema.omit({ status: true, restricted: true })), body));
   }
 
   @Post('cases/:id/status')
@@ -84,6 +84,30 @@ export class LitigationController {
     return this.lit.markHeld(hid, parse(z.object({ status: z.enum(['HELD', 'ADJOURNED', 'CANCELLED']) }).strict(), body).status);
   }
 
+  @Patch('hearings/:id')
+  @Can('lit:write')
+  updateHearing(@Param('id') hid: string, @Body() body: unknown) {
+    return this.lit.updateHearing(hid, parse(z.object({
+      startsAt: z.coerce.date().optional(), courtId: id.nullish(), judge: z.string().max(200).nullish(), purpose: z.string().max(500).nullish(),
+      chitSummary: z.string().max(20000).nullish(), outcome: z.string().max(500).nullish(),
+      summary: z.object({ whatHappened: z.string().trim().min(3).max(20000), ordersMade: z.string().max(20000).optional(), nextSteps: z.string().max(20000).optional(), companyActions: z.string().max(20000).optional() }).strict().optional(),
+    }).strict(), body));
+  }
+
+  @Post('hearings/:id/postpone')
+  @Can('lit:write')
+  @HttpCode(200)
+  postpone(@Param('id') hid: string, @Body() body: unknown) {
+    return this.lit.postponeHearing(hid, parse(z.object({ startsAt: z.coerce.date(), reason: z.string().trim().min(3).max(2000) }).strict(), body));
+  }
+
+  @Post('hearings/:id/continuance')
+  @Can('lit:write')
+  @HttpCode(200)
+  continuance(@Param('id') hid: string, @Body() body: unknown) {
+    return this.lit.continuance(hid, parse(z.object({ action: z.enum(['REQUEST', 'GRANTED', 'DENIED']), note: z.string().max(2000).nullish(), startsAt: z.coerce.date().nullish() }).strict(), body));
+  }
+
   @Post('hearings/:id/summary')
   @Can('lit:write')
   @HttpCode(200)
@@ -102,6 +126,12 @@ export class LitigationController {
     return this.lit.addDeadline(caseId, parse(z.object({ type: z.enum(['FILING', 'SUBMISSION', 'APPEAL', 'LIMITATION', 'OTHER']), title: z.string().trim().min(3).max(300), dueAt: z.coerce.date(), ownerId: id.nullish() }).strict(), body));
   }
 
+  @Patch('deadlines/:id')
+  @Can('lit:write')
+  updateDeadline(@Param('id') did: string, @Body() body: unknown) {
+    return this.lit.updateDeadline(did, parse(z.object({ type: z.enum(['FILING', 'SUBMISSION', 'APPEAL', 'LIMITATION', 'OTHER']).optional(), title: z.string().trim().min(3).max(300).optional(), dueAt: z.coerce.date().optional(), ownerId: id.nullish() }).strict(), body));
+  }
+
   @Post('deadlines/:id/status')
   @Can('lit:write')
   @HttpCode(200)
@@ -113,6 +143,18 @@ export class LitigationController {
   @Can('lit:write')
   engagement(@Param('id') caseId: string, @Body() body: unknown) {
     return this.lit.addEngagement(caseId, parse(z.object({ firmId: id, feeArrangement: z.string().max(2000).nullish(), budget: money.nullish(), currency: z.string().length(3).optional(), startedOn: z.coerce.date().nullish() }).strict(), body));
+  }
+
+  @Patch('engagements/:id')
+  @Can('lit:write')
+  updateEngagement(@Param('id') eid: string, @Body() body: unknown) {
+    return this.lit.updateEngagement(eid, parse(z.object({ feeArrangement: z.string().max(2000).nullish(), budget: money.nullish(), currency: z.string().length(3).optional(), startedOn: z.coerce.date().nullish() }).strict(), body));
+  }
+
+  @Patch('invoices/:id')
+  @Can('lit:write')
+  updateInvoice(@Param('id') iid: string, @Body() body: unknown) {
+    return this.lit.updateInvoice(iid, parse(z.object({ invoiceNo: z.string().trim().min(1).max(100).optional(), amount: money.optional(), currency: z.string().length(3).optional(), receivedOn: z.coerce.date().optional(), notes: z.string().max(2000).nullish() }).strict(), body));
   }
 
   @Post('engagements/:id/invoices')
@@ -134,6 +176,12 @@ export class LitigationController {
     return this.lit.addUpdate(caseId, parse(z.object({ receivedAt: z.coerce.date(), channel: z.enum(['EMAIL', 'PHONE', 'MEETING', 'LETTER']), summary: z.string().trim().min(3).max(20000) }).strict(), body));
   }
 
+  @Patch('updates/:id')
+  @Can('lit:write')
+  editUpdate(@Param('id') uid: string, @Body() body: unknown) {
+    return this.lit.updateCounselUpdate(uid, parse(z.object({ receivedAt: z.coerce.date().optional(), channel: z.enum(['EMAIL', 'PHONE', 'MEETING', 'LETTER']).optional(), summary: z.string().trim().min(3).max(20000).optional() }).strict(), body));
+  }
+
   @Post('cases/:id/evaluation')
   @Can('lit:write')
   @HttpCode(200)
@@ -151,7 +199,10 @@ export class LitigationController {
   @Patch('outcomes/:id')
   @Can('lit:write')
   outcomeUpdate(@Param('id') oid: string, @Body() body: unknown) {
-    return this.lit.updateOutcome(oid, parse(z.object({ paymentStatus: z.enum(['PENDING', 'PARTIAL', 'PAID', 'NA']).optional(), amount: money.nullish() }).strict(), body));
+    return this.lit.updateOutcome(oid, parse(z.object({
+      paymentStatus: z.enum(['PENDING', 'PARTIAL', 'PAID', 'NA']).optional(), amount: money.nullish(), kind: z.enum(['SETTLEMENT', 'JUDGMENT']).optional(),
+      decidedOn: z.coerce.date().optional(), currency: z.string().length(3).optional(), direction: z.enum(['PAYABLE', 'RECEIVABLE', 'NONE']).optional(), terms: z.string().max(10000).nullish(),
+    }).strict(), body));
   }
 
   @Post('outcomes/:id/enforcement')

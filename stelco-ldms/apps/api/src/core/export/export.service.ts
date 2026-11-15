@@ -41,6 +41,25 @@ export class ExportService {
     return Buffer.from(await wb.xlsx.writeBuffer());
   }
 
+  /** Several sheets in one xlsx download (e.g. summary + detail), audit-logged like send(). */
+  async sendSheets(res: Response, name: string, sheets: { name: string; columns: Column<any>[]; rows: any[] }[], meta: Record<string, unknown> = {}) {
+    const buf = await this.workbook(sheets);
+    const rows = sheets.reduce((n, s) => n + s.rows.length, 0);
+    const user = currentUser();
+    await this.audit.log({ action: 'export.list', entityType: name, meta: { rows, sheets: sheets.length, ...meta } });
+    await this.alerts.onExport(user.id, user.username, rows);
+    this.sendFile(res, `${name.replace(/[^a-z0-9-]+/gi, '-')}-${new Date().toISOString().slice(0, 10)}.xlsx`, buf, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  }
+
+  /** Stream a generated file to the browser as a download (never cached). */
+  sendFile(res: Response, filename: string, buf: Buffer, contentType: string) {
+    const safe = filename.replace(/[^\w.() -]+/g, '-');
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(buf);
+  }
+
   /** Send an xlsx list export, audit-logged and checked for mass-export alerts. */
   async send<T>(res: Response, name: string, columns: Column<T>[], rows: T[], meta: Record<string, unknown> = {}) {
     const buf = await this.workbook([{ name, columns, rows }]);

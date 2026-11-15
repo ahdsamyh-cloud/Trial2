@@ -3,6 +3,7 @@ import { Prisma, Unit } from '@prisma/client';
 import type { Permission } from '@ldms/shared';
 import { AuthUser, currentUser } from '../../common/context';
 import { forbidden, notFound } from '../../common/errors';
+import { SettingsService } from '../config/settings.service';
 import { PrismaService, Tx } from '../../common/prisma.service';
 import { AuditService } from '../audit/audit.service';
 
@@ -15,7 +16,7 @@ const NONE: Prisma.MatterWhereInput = { id: '__none__' };
  */
 @Injectable()
 export class PolicyService {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, private readonly settings: SettingsService) {}
 
   /** Units the user may act on with `perm`, 'ALL', or null if none. */
   units(perm: Permission, user: AuthUser = currentUser()): Unit[] | 'ALL' | null {
@@ -75,13 +76,24 @@ export class PolicyService {
     return (await db.matterAssignment.count({ where: { matterId, userId, role: { in: roles as never[] } } })) > 0;
   }
 
-  /** Edit rule: HoD/Unit Head/Paralegal of the unit, or an officer assigned to the matter. */
+  /**
+   * Edit rule: HoD and the unit's Unit Head/Paralegals always. Other legal staff of the unit: any matter
+   * of the unit when the HoD setting "access.officersEditAnyMatter" is on (default), otherwise only
+   * matters assigned to them. Every change is audited with its before/after values either way.
+   * (Restricted matters stay limited to named people: matterScope/RLS hide them from everyone else.)
+   */
   async assertWrite(matter: { id: string; unit: Unit }, tx?: Tx) {
+    if (!this.covers('matter:write', matter.unit)) throw forbidden();
+    if (!(await this.canWrite(matter, tx))) throw forbidden('Only people assigned to this matter can change it');
+  }
+
+  /** Same rule as assertWrite, as a yes/no (used to show or hide edit controls). */
+  async canWrite(matter: { id: string; unit: Unit }, tx?: Tx): Promise<boolean> {
     const user = currentUser();
-    if (!this.covers('matter:write', matter.unit, user)) throw forbidden();
-    if (user.isHod || this.covers('matter:assign', matter.unit, user) || this.hasRoleInUnit('PARALEGAL', matter.unit, user)) return;
-    if (await this.isAssigned(matter.id, user.id, ['ASSIGNEE', 'REVIEWER', 'APPROVER'], tx)) return;
-    throw forbidden('Only people assigned to this matter can change it');
+    if (!this.covers('matter:write', matter.unit, user)) return false;
+    if (user.isHod || this.covers('matter:assign', matter.unit, user) || this.hasRoleInUnit('PARALEGAL', matter.unit, user)) return true;
+    if (await this.settings.get<boolean>('access.officersEditAnyMatter')) return true;
+    return this.isAssigned(matter.id, user.id, ['ASSIGNEE', 'REVIEWER', 'APPROVER'], tx);
   }
 
   /** Scope for unit-owned non-matter records (laws, sessions, licences…): unit check only. */

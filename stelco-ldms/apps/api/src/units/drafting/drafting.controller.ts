@@ -44,6 +44,42 @@ export class DraftingController {
     return this.drafting.update(rid, parse(z.object({ counterparty: z.string().max(300).nullish(), contractValue: money.nullish(), currency: z.string().length(3).optional() }).strict(), body));
   }
 
+  @Post('requests/:id/new-version')
+  @Can('draft:draft', 'intake:triage')
+  newVersion(@Param('id') rid: string, @Body() body: unknown) {
+    return this.drafting.newVersion(rid, parse(z.object({ title: z.string().trim().max(300).optional(), note: z.string().max(20000).nullish() }).strict(), body));
+  }
+
+  @Get('requests/:id/versions')
+  @Can('matter:read')
+  versions(@Param('id') rid: string) {
+    return this.drafting.versions(rid);
+  }
+
+  @Get('requests/:id/externals')
+  @Can('matter:read')
+  externals(@Param('id') rid: string) {
+    return this.drafting.externals(rid);
+  }
+
+  @Post('requests/:id/externals')
+  @Can('draft:draft')
+  addExternal(@Param('id') rid: string, @Body() body: unknown) {
+    return this.drafting.addExternal(rid, parse(z.object({
+      firmId: id, lawyerId: id.nullish(), scope: z.string().trim().min(3).max(5000), sentAt: z.coerce.date(), dueAt: z.coerce.date().nullish(),
+      fee: money.nullish(), currency: z.string().length(3).optional(), notes: z.string().max(5000).nullish(),
+    }).strict(), body));
+  }
+
+  @Patch('externals/:id')
+  @Can('draft:draft')
+  updateExternal(@Param('id') eid: string, @Body() body: unknown) {
+    return this.drafting.updateExternal(eid, parse(z.object({
+      firmId: id.optional(), lawyerId: id.nullish(), scope: z.string().trim().min(3).max(5000).optional(), sentAt: z.coerce.date().optional(), dueAt: z.coerce.date().nullish(),
+      receivedAt: z.coerce.date().nullish(), status: z.enum(['SENT', 'RECEIVED', 'CANCELLED']).optional(), fee: money.nullish(), currency: z.string().length(3).optional(), notes: z.string().max(5000).nullish(),
+    }).strict(), body));
+  }
+
   @Post('requests/:id/actions')
   @Can('draft:draft', 'draft:review', 'draft:approve', 'matter:assign', 'intake:triage')
   @HttpCode(200)

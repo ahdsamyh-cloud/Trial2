@@ -4,7 +4,7 @@ import { CryptoService } from '../../common/crypto.service';
 import { currentUser } from '../../common/context';
 import { badRequest, forbidden, notFound } from '../../common/errors';
 import { PrismaService, Tx } from '../../common/prisma.service';
-import { AuditService } from '../audit/audit.service';
+import { AuditService, changedFields } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PolicyService } from '../policy/policy.service';
 import { SlaService } from '../sla/sla.service';
@@ -113,6 +113,40 @@ export class MattersService {
     return { rows, total, page, pageSize };
   }
 
+  /**
+   * Change history of a matter and everything under it (hearings, deadlines, invoices, documents,
+   * drafting externals...), straight from the tamper-evident audit log: who, when, old -> new values.
+   * Views and denied attempts are left out; encrypted fields only show "[changed]".
+   */
+  async history(id: string) {
+    await this.policy.assertMatter(id, 'matter:read');
+    if (!currentUser().perms.has('matter:read')) throw forbidden();
+    const [c, docs, externals] = await Promise.all([
+      this.prisma.db.litigationCase.findUnique({
+        where: { matterId: id },
+        select: { hearings: { select: { id: true } }, deadlines: { select: { id: true } }, updates: { select: { id: true } }, outcomes: { select: { id: true } }, engagements: { select: { id: true, invoices: { select: { id: true } } } } },
+      }),
+      this.prisma.db.document.findMany({ where: { OR: [{ matterId: id }, { hearing: { caseId: id } }] }, select: { id: true } }),
+      this.prisma.db.draftingExternal.findMany({ where: { matterId: id }, select: { id: true } }),
+    ]);
+    const ids = [id, ...docs.map((d) => d.id), ...externals.map((e) => e.id)];
+    if (c) ids.push(...c.hearings.map((x) => x.id), ...c.deadlines.map((x) => x.id), ...c.updates.map((x) => x.id), ...c.outcomes.map((x) => x.id), ...c.engagements.flatMap((e) => [e.id, ...e.invoices.map((i) => i.id)]));
+    const rows = await this.prisma.base.auditLog.findMany({
+      where: { AND: [{ OR: [{ entityId: { in: ids } }, { meta: { path: ['matterId'], equals: id } }] }, { outcome: 'SUCCESS' }, { NOT: { action: { endsWith: '.view' } } }, { NOT: { action: { startsWith: 'matter.view' } } }] },
+      orderBy: { seq: 'desc' }, take: 500,
+      select: { seq: true, ts: true, actorName: true, action: true, entityType: true, before: true, after: true, meta: true },
+    });
+    return rows.map((r) => {
+      const before = (r.before ?? {}) as Record<string, unknown>;
+      const after = (r.after ?? {}) as Record<string, unknown>;
+      const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((k) => !/Enc$|^id$|At$|ById$|^createdAt|^updatedAt/.test(k) || ['dueAt', 'startsAt', 'receivedAt', 'decidedOn', 'filingDate', 'newHearingAt'].includes(k));
+      return {
+        id: String(r.seq), at: r.ts, who: r.actorName ?? 'system', action: r.action, entityType: r.entityType,
+        changes: keys.slice(0, 40).map((k) => ({ field: k, before: before[k] ?? null, after: after[k] ?? null })),
+      };
+    });
+  }
+
   async detail(id: string) {
     const m = await this.policy.assertMatter(id);
     const user = currentUser();
@@ -146,6 +180,7 @@ export class MattersService {
       linksFrom: undefined, linksTo: undefined,
       sla: portal ? [] : await this.sla.forMatter(id),
       portalView: portal,
+      canWrite: !portal && (await this.policy.canWrite(m)),
     };
   }
 
@@ -157,7 +192,10 @@ export class MattersService {
       if (m.restricted) { patch.descriptionEnc = this.crypto.encrypt(data.description); patch.description = null; }
     }
     const after = await this.prisma.db.matter.update({ where: { id }, data: patch });
-    await this.audit.log({ action: 'matter.updated', entityType: 'Matter', entityId: id, before: m, after });
+    // patch (not data): for restricted matters it holds the encrypted description, never the plain text.
+    const { lastActivityAt: _la, ...changes } = patch as Record<string, unknown>;
+    const diff = changedFields(m as unknown as Record<string, unknown>, changes);
+    if (diff) await this.audit.log({ action: 'matter.updated', entityType: 'Matter', entityId: id, ...diff });
     return after;
   }
 
@@ -218,11 +256,13 @@ export class MattersService {
     return { ok: true };
   }
 
-  async comment(id: string, body: string, internal: boolean) {
+  async comment(id: string, body: string, internal: boolean, versionId: string | null = null) {
     const m = await this.policy.assertMatter(id);
     const user = currentUser();
     const portal = !user.perms.has('matter:read');
     if (portal && internal) throw forbidden('Requesters can only post visible comments');
+    // A comment can be about one version of one of this matter's documents (policy/draft review rounds).
+    if (versionId && !(await this.prisma.db.documentVersion.count({ where: { id: versionId, document: { matterId: id, deletedAt: null } } }))) throw badRequest('That document version does not belong to this matter');
     const usernames = [...new Set([...body.matchAll(/@([a-zA-Z0-9._-]{3,40})/g)].map((x) => x[1]!.toLowerCase()))];
     const mentioned = usernames.length ? await this.prisma.base.user.findMany({ where: { username: { in: usernames }, status: 'ACTIVE' }, include: { roles: true } }) : [];
     // Only notify people who can see the matter (unit staff / HoD / named on restricted).
@@ -233,7 +273,7 @@ export class MattersService {
       if (inUnit && (named || u.roles.some((r) => r.role === 'HOD'))) allowed.push(u.id);
     }
     const c = await this.prisma.db.comment.create({
-      data: { matterId: id, authorId: user.id, internal: portal ? false : internal, mentions: allowed, body: m.restricted ? null : body, bodyEnc: m.restricted ? this.crypto.encrypt(body) : null },
+      data: { matterId: id, authorId: user.id, internal: portal ? false : internal, mentions: allowed, versionId, body: m.restricted ? null : body, bodyEnc: m.restricted ? this.crypto.encrypt(body) : null },
     });
     await this.prisma.db.matter.update({ where: { id }, data: { lastActivityAt: new Date() } });
     await this.audit.log({ action: 'matter.comment', entityType: 'Matter', entityId: id, meta: { commentId: c.id, internal: c.internal, mentions: allowed.length } });

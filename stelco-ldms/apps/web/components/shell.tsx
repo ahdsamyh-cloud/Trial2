@@ -2,11 +2,12 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ReactNode, useEffect, useState } from 'react';
-import { Bell, BookOpen, Calendar, ClipboardCheck, FileText, Gavel, GraduationCap, Home, Inbox, LayoutDashboard, LogOut, Menu, Search, Settings, Shield, Users, X, Briefcase, Send, Upload, Archive } from 'lucide-react';
+import { Bell, BookOpen, Calendar, ClipboardCheck, FileText, Gavel, GraduationCap, Home, Inbox, LayoutDashboard, LogOut, Menu, Search, Settings, Shield, Users, X, Briefcase, Send, Upload, Archive, FileBarChart } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { t } from '@/lib/i18n';
 import { ReauthDialog } from './reauth';
+import { ThaanaToggle } from './thaana-toggle';
 import { cx } from './ui';
 
 interface NavItem { href: string; label: string; icon: ReactNode; show: boolean }
@@ -43,6 +44,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     { href: '/drafting', label: t('Drafting'), icon: <FileText size={18} />, show: can('draft:draft') || can('matter:read', 'DRF') },
     { href: '/compliance', label: t('Compliance'), icon: <ClipboardCheck size={18} />, show: can('cmp:write') || can('matter:read', 'CMP') || can('portal:respond') },
     { href: '/awareness', label: t('Awareness'), icon: <GraduationCap size={18} />, show: can('awr:write') || can('matter:read', 'AWR') || can('portal:use') },
+    { href: '/reports', label: t('Reports'), icon: <FileBarChart size={18} />, show: can('report:read') },
     { href: '/calendar', label: t('Calendar'), icon: <Calendar size={18} />, show: can('calendar:read') },
     { href: '/search', label: t('Search'), icon: <Search size={18} />, show: can('search:use') || can('portal:use') },
     { href: '/knowledge', label: t('Bulletins & FAQ'), icon: <BookOpen size={18} />, show: true },
@@ -81,6 +83,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <button className="rounded p-1.5 md:hidden" onClick={() => setOpen(!open)} aria-label={open ? t('Close menu') : t('Open menu')} aria-expanded={open}>{open ? <X size={20} /> : <Menu size={20} />}</button>
         <Link href="/" className="flex items-center gap-2 font-semibold text-brand-900"><img src="/icons/icon.svg" alt="" width={26} height={26} />{t('STELCO Legal')}</Link>
         <div className="ml-auto flex items-center gap-1">
+          <ThaanaToggle />
           <Link href="/notifications" className="relative rounded p-2 hover:bg-slate-100" aria-label={t('Notifications ({n} unread)', { n: unread })}>
             <Bell size={18} />{unread ? <span className="absolute -right-0.5 -top-0.5 rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white">{unread > 99 ? '99+' : unread}</span> : null}
           </Link>

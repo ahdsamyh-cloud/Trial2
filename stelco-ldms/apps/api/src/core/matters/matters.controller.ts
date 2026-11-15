@@ -128,8 +128,8 @@ export class MattersController {
   @Post(':id/comments')
   @Can('matter:read', 'portal:use')
   comment(@Param('id') id: string, @Body() body: unknown) {
-    const b = parse(z.object({ body: z.string().trim().min(1).max(10000), internal: z.boolean().default(true) }).strict(), body);
-    return this.matters.comment(id, b.body, b.internal);
+    const b = parse(z.object({ body: z.string().trim().min(1).max(10000), internal: z.boolean().default(true), versionId: z.string().max(40).nullish() }).strict(), body);
+    return this.matters.comment(id, b.body, b.internal, b.versionId ?? null);
   }
 
   @Post(':id/restrict')
@@ -146,6 +146,12 @@ export class MattersController {
   link(@Param('id') id: string, @Body() body: unknown) {
     const b = parse(z.object({ toId: z.string().max(40), kind: z.enum(['RELATED', 'APPEAL_OF', 'SUPERSEDES', 'DUPLICATE']).default('RELATED') }).strict(), body);
     return this.matters.link(id, b.toId, b.kind);
+  }
+
+  @Get(':id/history')
+  @Can('matter:read')
+  history(@Param('id') id: string) {
+    return this.matters.history(id);
   }
 
   @Get(':id/sla')

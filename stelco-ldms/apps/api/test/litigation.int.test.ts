@@ -41,7 +41,12 @@ describe('litigation', () => {
   it('IDOR: other units cannot see or change litigation cases', async () => {
     expect((await (await as('lo.drf1')).get(`/litigation/cases/${caseId}`)).status).toBe(404);
     expect((await (await as('lo.drf1')).post(`/litigation/cases/${caseId}/updates`, { receivedAt: new Date().toISOString(), channel: 'EMAIL', summary: 'x x x' })).status).toBe(404);
+    // Unassigned litigation officer: allowed by default (HoD setting), audited; refused when the setting is off.
+    expect((await (await as('lo.lit2')).post(`/litigation/cases/${caseId}/updates`, { receivedAt: new Date().toISOString(), channel: 'EMAIL', summary: 'not assigned' })).status).toBe(201);
+    const hod = await as('hod');
+    await hod.put('/config/settings/access.officersEditAnyMatter', { value: false });
     expect((await (await as('lo.lit2')).post(`/litigation/cases/${caseId}/updates`, { receivedAt: new Date().toISOString(), channel: 'EMAIL', summary: 'not assigned' })).status).toBe(403);
+    await hod.put('/config/settings/access.officersEditAnyMatter', { value: true });
     expect((await (await as('req.fin')).get(`/litigation/cases/${caseId}`)).status).toBe(403);
   });
 

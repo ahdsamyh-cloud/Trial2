@@ -10,6 +10,7 @@ export const SCHEDULES: Record<string, string> = {
   'cmp.cycles': '15 6 * * *',
   'cmp.ack-reminders': '0 9 * * 0-4',
   'cmp.findings-overdue': '30 6 * * *',
+  'cmp.answer-reminders': '0 9 * * 0-4',
   'drf.expiry-scan': '45 6 * * *',
   'retention.scan': '0 3 * * 6',
   'crypto.rotate': '0 4 * * 5',

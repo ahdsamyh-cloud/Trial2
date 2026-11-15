@@ -39,6 +39,29 @@ export interface AuditEntry {
   actorName?: string | null;
 }
 
+/** Fields whose values never appear in a change record (encrypted or secret); only "changed" is noted. */
+const MASKED = /(Enc$|^exposure$|^amount$|password|secret|token|hash)/i;
+
+const norm = (v: unknown) => (v instanceof Date ? v.toISOString() : v === undefined ? null : typeof v === 'object' && v !== null && 'toFixed' in (v as object) ? String(v) : v);
+
+/**
+ * Only the fields that actually changed, as { before, after } snapshots for the audit trail.
+ * Returns null if nothing changed. Masked fields are recorded as "[changed]".
+ */
+export function changedFields(before: Record<string, unknown>, after: Record<string, unknown>): { before: Record<string, unknown>; after: Record<string, unknown> } | null {
+  const b: Record<string, unknown> = {};
+  const a: Record<string, unknown> = {};
+  for (const k of Object.keys(after)) {
+    if (after[k] === undefined) continue;
+    const x = norm(before[k]);
+    const y = norm(after[k]);
+    if (JSON.stringify(x) === JSON.stringify(y)) continue;
+    b[k] = MASKED.test(k) ? '[changed]' : x;
+    a[k] = MASKED.test(k) ? '[changed]' : y;
+  }
+  return Object.keys(a).length ? { before: b, after: a } : null;
+}
+
 function hashOf(prevHash: string, e: { ts: string; actorId: string | null; sessionId: string | null; ip: string | null; action: string; entityType: string | null; entityId: string | null; outcome: string; before: unknown; after: unknown; meta: unknown }) {
   return createHash('sha256').update(prevHash).update(JSON.stringify(canonicalize(e))).digest('hex');
 }

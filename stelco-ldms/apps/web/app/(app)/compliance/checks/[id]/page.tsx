@@ -3,62 +3,66 @@ import Link from 'next/link';
 import { use, useState } from 'react';
 import { api } from '@/lib/api';
 import { useApi, useAction } from '@/lib/hooks';
-import { fmtDate, label } from '@/lib/format';
+import { fmtDate, fmtDateTime, label } from '@/lib/format';
 import { t } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth';
 import { DocumentsPanel } from '@/components/parts';
-import { Alert, Badge, Button, Card, Field, PageHeader, Select, Spinner, StatusBadge, Textarea } from '@/components/ui';
+import { Alert, Badge, Button, Card, Field, PageHeader, Spinner, StatusBadge, Textarea } from '@/components/ui';
 
-interface Cycle { id: string; departmentId: string; period: string; dueAt: string; status: string; items: { id: string; response: string | null; rating: string | null; reviewNote: string | null; findings: { id: string; status: string }[]; obligation: { description: string; article: string | null; evidenceRequired: string | null; risk: string; law: { id: string; title: string } } }[] }
+interface Item {
+  id: string; response: string | null; answer: string | null; answeredAt: string | null; reminderCount: number; lastReminderAt: string | null; rating: string | null;
+  obligation: { description: string; article: string | null; evidenceRequired: string | null; risk: string; law: { id: string; title: string } };
+}
+interface Cycle { id: string; departmentId: string; period: string; dueAt: string; status: string; items: Item[] }
 
+/**
+ * A department confirms each obligation itself: "Yes, we comply" closes it; "No" keeps it open and
+ * the department is reminded until it is complied with. Legal can record an answer on the
+ * department's behalf (e.g. received by email); that is marked in the audit trail.
+ */
 export default function CheckPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { me, can } = useAuth();
   const { data, reload, error } = useApi<Cycle>(`/compliance/cycles/${id}`);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [rating, setRating] = useState<Record<string, { rating: string; note: string }>>({});
-  const [returnNote, setReturnNote] = useState('');
+  const depts = useApi<{ id: string; name: string }[]>('/config/departments');
+  const [notes, setNotes] = useState<Record<string, string>>({});
   const act = useAction();
   if (error) return <Alert>{error.message}</Alert>;
   if (!data) return <Spinner />;
   const dept = me?.departmentId === data.departmentId && can('portal:respond');
-  const editable = dept && ['ISSUED', 'IN_PROGRESS'].includes(data.status);
-  const reviewer = can('cmp:review', 'CMP') && ['SUBMITTED', 'UNDER_REVIEW'].includes(data.status);
+  const staff = can('cmp:write', 'CMP');
+  const canAnswer = (dept || staff) && !['SUBMITTED', 'UNDER_REVIEW'].includes(data.status);
+  const counts = { yes: data.items.filter((i) => i.answer === 'YES').length, no: data.items.filter((i) => i.answer === 'NO').length };
+  const answer = (i: Item, a: 'YES' | 'NO') => act.run(async () => { await api.post(`/compliance/items/${i.id}/answer`, { answer: a, comment: notes[i.id] ?? i.response ?? null }); await reload(); });
   return (
     <div className="space-y-4">
-      <PageHeader title={t('Compliance checklist {p}', { p: data.period })} subtitle={<>{t('Due')} {fmtDate(data.dueAt)} · <StatusBadge value={data.status} /></>}
-        actions={<>
-          {editable ? <Button busy={act.busy} onClick={() => act.run(async () => { await api.post(`/compliance/cycles/${id}/submit`); await reload(); })}>{t('Submit to Legal')}</Button> : null}
-          <Link href="/compliance"><Button variant="ghost">{t('Back')}</Button></Link>
-        </>} />
+      <PageHeader title={t('Compliance confirmation {p}', { p: data.period })}
+        subtitle={<>{depts.data?.find((d) => d.id === data.departmentId)?.name ?? ''} · {t('Due')} {fmtDate(data.dueAt)} · <StatusBadge value={data.status} /></>}
+        actions={<Link href="/compliance"><Button variant="ghost">{t('Back')}</Button></Link>} />
+      <Card>
+        <p className="text-sm text-slate-700">{t('For each obligation, confirm whether your department complies. "Yes" closes it. "No" keeps it open and you will be reminded until it is complied with. You will be asked again every year.')}</p>
+        <div className="mt-2 flex flex-wrap gap-2 text-sm"><Badge tone="green">{t('Yes')}: {counts.yes}</Badge><Badge tone="red">{t('No')}: {counts.no}</Badge><Badge tone="amber">{t('Not answered')}: {data.items.length - counts.yes - counts.no}</Badge></div>
+        {staff && !dept ? <p className="mt-2 text-xs text-slate-500">{t('You are Legal staff: an answer you record is marked as given on the department’s behalf.')}</p> : null}
+      </Card>
       {act.error ? <Alert>{act.error}</Alert> : null}
       {data.items.map((i, n) => (
-        <Card key={i.id} title={<span>{n + 1}. {i.obligation.description}</span>} actions={<><StatusBadge value={i.obligation.risk} />{i.rating ? <StatusBadge value={i.rating} /> : null}</>}>
+        <Card key={i.id} title={<span>{n + 1}. {i.obligation.description}</span>}
+          actions={<><StatusBadge value={i.obligation.risk} />{i.answer ? <Badge tone={i.answer === 'YES' ? 'green' : 'red'}>{i.answer === 'YES' ? t('Complies') : t('Does not comply')}</Badge> : <Badge tone="amber">{t('Not answered')}</Badge>}</>}>
           <p className="mb-2 text-xs text-slate-500"><Link className="underline" href={`/compliance/laws/${i.obligation.law.id}`}>{i.obligation.law.title}</Link>{i.obligation.article ? ` · ${i.obligation.article}` : ''}{i.obligation.evidenceRequired ? ` · ${t('Evidence')}: ${i.obligation.evidenceRequired}` : ''}</p>
-          {editable ? (
-            <div className="space-y-2">
-              <Field label={t('Your answer')}>{(fid) => <Textarea id={fid} value={answers[i.id] ?? i.response ?? ''} onChange={(e) => setAnswers({ ...answers, [i.id]: e.target.value })} />}</Field>
-              <Button size="sm" variant="secondary" busy={act.busy} onClick={() => act.run(async () => { await api.post(`/compliance/items/${i.id}/response`, { response: answers[i.id] ?? i.response ?? '' }); await reload(); })}>{t('Save answer')}</Button>
+          {i.answeredAt ? <p className="text-xs text-slate-500">{t('Answered')} {fmtDateTime(i.answeredAt)}{i.reminderCount ? ` · ${t('{n} reminder(s) sent', { n: i.reminderCount })}` : ''}</p> : i.reminderCount ? <p className="text-xs text-slate-500">{t('{n} reminder(s) sent', { n: i.reminderCount })}</p> : null}
+          {canAnswer ? (
+            <div className="mt-2 space-y-2">
+              <Field label={t('Comment (optional)')}>{(fid) => <Textarea id={fid} value={notes[i.id] ?? i.response ?? ''} onChange={(e) => setNotes({ ...notes, [i.id]: e.target.value })} />}</Field>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant={i.answer === 'YES' ? 'primary' : 'secondary'} busy={act.busy} onClick={() => answer(i, 'YES')}>{t('Yes, we comply')}</Button>
+                <Button size="sm" variant={i.answer === 'NO' ? 'danger' : 'secondary'} busy={act.busy} onClick={() => answer(i, 'NO')}>{t('No, not yet')}</Button>
+              </div>
             </div>
-          ) : <p className="whitespace-pre-wrap text-sm">{i.response ?? <span className="text-slate-400">{t('No answer yet')}</span>}</p>}
-          <div className="mt-3"><DocumentsPanel ownerType="checkItem" ownerId={i.id} canWrite={!!editable} title={t('Evidence')} /></div>
-          {i.reviewNote ? <p className="mt-2 text-sm"><strong>{t('Reviewer')}:</strong> {i.reviewNote}</p> : null}
-          {i.findings.map((f) => <Link key={f.id} href={`/compliance/findings/${f.id}`} className="mt-2 inline-block"><Badge tone="red">{t('Finding')} · {label(f.status)}</Badge></Link>)}
-          {reviewer && !i.rating ? (
-            <div className="mt-3 grid gap-2 border-t pt-3 sm:grid-cols-3">
-              <Field label={t('Rating')}>{(fid) => <Select id={fid} placeholder={t('— Select —')} value={rating[i.id]?.rating ?? ''} onChange={(e) => setRating({ ...rating, [i.id]: { note: rating[i.id]?.note ?? '', rating: e.target.value } })} options={['COMPLIANT', 'PARTIAL', 'NON_COMPLIANT', 'NA'].map((x) => ({ value: x, label: x === 'NA' ? t('Not applicable') : label(x) }))} />}</Field>
-              <div className="sm:col-span-2"><Field label={t('Note')}>{(fid) => <Textarea id={fid} value={rating[i.id]?.note ?? ''} onChange={(e) => setRating({ ...rating, [i.id]: { rating: rating[i.id]?.rating ?? '', note: e.target.value } })} />}</Field></div>
-              <Button size="sm" disabled={!rating[i.id]?.rating} busy={act.busy} onClick={() => act.run(async () => { await api.post(`/compliance/items/${i.id}/rating`, { rating: rating[i.id]!.rating, note: rating[i.id]!.note || undefined }); await reload(); })}>{t('Save rating')}</Button>
-            </div>
-          ) : null}
+          ) : i.response ? <p className="mt-2 whitespace-pre-wrap text-sm">{i.response}</p> : null}
+          {i.rating ? <p className="mt-2 text-xs text-slate-500">{t('Earlier officer rating')}: {label(i.rating)}</p> : null}
+          <div className="mt-3"><DocumentsPanel ownerType="checkItem" ownerId={i.id} canWrite={!!canAnswer} title={t('Evidence (optional)')} /></div>
         </Card>
       ))}
-      {reviewer ? (
-        <Card title={t('Return to the department')}>
-          <Field label={t('What is missing?')}>{(fid) => <Textarea id={fid} value={returnNote} onChange={(e) => setReturnNote(e.target.value)} />}</Field>
-          <Button className="mt-2" variant="secondary" disabled={returnNote.length < 3} onClick={() => act.run(async () => { await api.post(`/compliance/cycles/${id}/return`, { note: returnNote }); await reload(); })}>{t('Return for more evidence')}</Button>
-        </Card>
-      ) : null}
     </div>
   );
 }

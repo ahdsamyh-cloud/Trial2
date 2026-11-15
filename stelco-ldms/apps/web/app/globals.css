@@ -8,3 +8,9 @@ body { @apply bg-slate-50 text-slate-900 antialiased; }
 .diff-added { @apply bg-green-100 text-green-900; }
 .diff-removed { @apply bg-red-100 text-red-900 line-through; }
 @media print { aside, header, nav { display: none !important; } }
+
+/* Dhivehi (Thaana) is written right-to-left. Each paragraph/field takes its direction from its own
+   first strong character, so Dhivehi text reads right-to-left and English left-to-right, mixed freely. */
+p, li, dd, td, th, blockquote, .whitespace-pre-wrap, textarea, input[type='text'], input:not([type]), input[type='search'] { unicode-bidi: plaintext; }
+textarea, input { text-align: start; }
+:lang(dv), [lang='dv'] { font-family: 'Faruma', 'MV Faseyha', 'MV Boli', 'Noto Sans Thaana', sans-serif; }

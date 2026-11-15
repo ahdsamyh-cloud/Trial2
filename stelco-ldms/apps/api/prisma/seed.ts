@@ -38,7 +38,8 @@ const REQUEST_TYPES: [Unit, string, string, string | null][] = [
   ['DRF', 'MOU', 'MoU', 'DRF_MOU'],
   ['DRF', 'NDA', 'NDA / confidentiality agreement', 'DRF_NDA'],
   ['DRF', 'LETTER', 'Letter, notice or reply letter', 'DRF_LETTER'],
-  ['DRF', 'POLICY', 'Policy or procedure drafting / review', 'DRF_POLICY'],
+  ['DRF', 'POLICY', 'Policy or procedure drafting', 'DRF_POLICY'],
+  ['DRF', 'POLICY_REVIEW', 'Policy review and comments', 'DRF_POLICY'],
   ['DRF', 'OPINION', 'Legal opinion', 'DRF_OPINION'],
   ['DRF', 'CONTRACT_REVIEW', 'Review of a contract drafted by the other party', 'DRF_CONTRACT_REVIEW'],
   ['DRF', 'POA', 'Power of Attorney', 'DRF_POA'],
@@ -71,6 +72,8 @@ const DOC_TYPES: [string, string, Unit | null][] = [
   ['EMAIL', 'Original email', null], ['ATTACHMENT', 'Attachment', null], ['CORRESPONDENCE', 'Correspondence', null],
   ['PLEADING', 'Pleading', 'LIT'], ['EVIDENCE', 'Evidence', 'LIT'], ['SUBMISSION', 'Submission', 'LIT'], ['COURT_ORDER', 'Court order', 'LIT'],
   ['JUDGMENT', 'Judgment', 'LIT'], ['ENGAGEMENT_LETTER', 'Engagement letter', 'LIT'], ['INVOICE', 'Counsel invoice', 'LIT'],
+  ['HEARING_CHIT', 'Hearing chit', 'LIT'], ['CONTINUANCE_REQUEST', 'Request for continuance', 'LIT'], ['POSTPONEMENT_NOTICE', 'Postponement notice', 'LIT'],
+  ['POLICY', 'Policy document', 'DRF'], ['COMMENTS', 'Comments on a draft', 'DRF'], ['EXTERNAL_WORK', 'Work from external lawyer', 'DRF'],
   ['DRAFT', 'Draft', 'DRF'], ['SIGNED_CONTRACT', 'Signed contract', 'DRF'], ['OPINION', 'Legal opinion', 'DRF'], ['POA', 'Power of attorney', 'DRF'],
   ['LAW_TEXT', 'Law / regulation text', 'CMP'], ['EVIDENCE_CMP', 'Compliance evidence', 'CMP'], ['SLIDES', 'Presentation', 'AWR'], ['HANDOUT', 'Handout', 'AWR'],
 ];

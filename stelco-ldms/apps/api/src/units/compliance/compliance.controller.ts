@@ -1,7 +1,9 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { z } from 'zod';
 import { Can } from '../../common/decorators';
 import { parse, qrec, qs } from '../../common/zod';
+import { ExportService } from '../../core/export/export.service';
 import { ComplianceService, FREQUENCIES } from './compliance.service';
 
 const id = z.string().max(40);
@@ -12,7 +14,8 @@ const lawSchema = z.object({
   sourceUrl: z.string().url().max(500).nullish(), summary: z.string().max(20000).nullish(), officerId: id.nullish(),
 }).strict();
 const obligationSchema = z.object({
-  lawId: id, description: z.string().trim().min(3).max(5000), article: z.string().max(100).nullish(), frequency: z.enum(FREQUENCIES),
+  // Default ANNUAL: every department is asked again each year, even if it answered Yes before.
+  lawId: id, description: z.string().trim().min(3).max(5000), article: z.string().max(100).nullish(), frequency: z.enum(FREQUENCIES).default('ANNUAL'),
   evidenceRequired: z.string().max(5000).nullish(), risk: sev, penalty: z.string().max(5000).nullish(), ownerId: id.nullish(),
   departmentIds: z.array(id).min(1).max(40), active: z.boolean().optional(),
 }).strict();
@@ -27,7 +30,7 @@ const changeSchema = z.object({
 
 @Controller('compliance')
 export class ComplianceController {
-  constructor(private readonly cmp: ComplianceService) {}
+  constructor(private readonly cmp: ComplianceService, private readonly exporter: ExportService) {}
 
   @Get('dashboard')
   @Can('matter:read', 'cmp:write', 'dashboard:hod')
@@ -159,6 +162,64 @@ export class ComplianceController {
   @HttpCode(200)
   submit(@Param('id') cid: string) {
     return this.cmp.submitCycle(cid);
+  }
+
+  @Post('items/:id/answer')
+  @Can('portal:respond', 'cmp:write')
+  @HttpCode(200)
+  answer(@Param('id') iid: string, @Body() body: unknown) {
+    return this.cmp.answer(iid, parse(z.object({ answer: z.enum(['YES', 'NO']), comment: z.string().max(20000).nullish() }).strict(), body));
+  }
+
+  @Post('reminders/run')
+  @Can('cmp:write')
+  @HttpCode(200)
+  reminders() {
+    return this.cmp.answerReminders();
+  }
+
+  @Get('reports/departments')
+  @Can('matter:read', 'cmp:write', 'report:read')
+  async departmentReport(@Query() query: unknown, @Res({ passthrough: true }) res: Response) {
+    const q = qrec(query, ['year', 'format']);
+    const year = q.year && /^\d{4}$/.test(q.year) ? Number(q.year) : undefined;
+    const r = await this.cmp.departmentReport(year);
+    if (q.format === 'xlsx') {
+      return this.exporter.sendSheets(res, `compliance-by-department-${r.year}`, [
+        { name: 'By department', rows: r.summary, columns: [
+          { key: 'department', header: 'Department', width: 32 }, { key: 'obligations', header: 'Obligations' }, { key: 'yes', header: 'Complied (Yes)' }, { key: 'no', header: 'Not complied (No)' },
+          { key: 'unanswered', header: 'Not answered' }, { key: 'confirmedPct', header: '% confirmed' }, { key: 'circulars', header: 'Circulars sent' }, { key: 'acknowledged', header: 'Circulars acknowledged' }, { key: 'remindersSent', header: 'Reminders sent' },
+        ] },
+        { name: 'Detail', rows: r.detail, columns: [
+          { key: 'department', header: 'Department', width: 28 }, { key: 'period', header: 'Period' }, { key: 'law', header: 'Law', width: 36 }, { key: 'obligation', header: 'Obligation', width: 60 },
+          { key: 'article', header: 'Article' }, { key: 'risk', header: 'Risk' }, { key: 'answer', header: 'Answer' }, { key: 'answeredAt', header: 'Answered on', width: 20 },
+          { key: 'comment', header: 'Department comment', width: 40 }, { key: 'reminders', header: 'Reminders' }, { key: 'dueAt', header: 'Due', width: 20 },
+        ] },
+      ], { year: r.year });
+    }
+    return r;
+  }
+
+  // ------------------------------------------------------------------ law research
+  @Get('research')
+  @Can('matter:read', 'cmp:write')
+  research(@Query() query: unknown) {
+    const q = qrec(query, ['mine', 'status']);
+    return this.cmp.research({ mine: q.mine === 'true', status: q.status && ['ASSIGNED', 'IN_PROGRESS', 'COMPLETED'].includes(q.status) ? q.status : undefined });
+  }
+
+  @Post('laws/:id/research')
+  @Can('cmp:write', 'matter:assign')
+  @HttpCode(200)
+  assignResearch(@Param('id') lid: string, @Body() body: unknown) {
+    return this.cmp.assignResearch(lid, parse(z.object({ assigneeId: id, dueAt: z.coerce.date().nullish(), note: z.string().max(5000).nullish() }).strict(), body));
+  }
+
+  @Post('laws/:id/research/progress')
+  @Can('cmp:write')
+  @HttpCode(200)
+  researchProgress(@Param('id') lid: string, @Body() body: unknown) {
+    return this.cmp.researchProgress(lid, parse(z.object({ status: z.enum(['IN_PROGRESS', 'COMPLETED']), findings: z.string().max(50000).nullish() }).strict(), body));
   }
 
   @Post('items/:id/rating')

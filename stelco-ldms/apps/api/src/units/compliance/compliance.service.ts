@@ -4,7 +4,7 @@ import { addBusinessDays, canMove, CHECK_CYCLE_TRANSITIONS, CheckCycleStatus, FI
 import { currentUser } from '../../common/context';
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors';
 import { PrismaService } from '../../common/prisma.service';
-import { AuditService } from '../../core/audit/audit.service';
+import { AuditService, changedFields } from '../../core/audit/audit.service';
 import { CalendarService } from '../../core/calendar/calendar.service';
 import { SettingsService } from '../../core/config/settings.service';
 import { DocumentsService } from '../../core/documents/documents.service';
@@ -65,6 +65,7 @@ export class ComplianceService implements OnModuleInit {
     this.jobs.register('cmp.cycles', () => this.generateCycles());
     this.jobs.register('cmp.ack-reminders', () => this.ackReminders());
     this.jobs.register('cmp.findings-overdue', () => this.findingsOverdue());
+    this.jobs.register('cmp.answer-reminders', () => this.answerReminders());
     this.documents.registerOwner('law', {
       read: async (id) => { await this.law(id); if (!this.isLegal() && !currentUser().perms.has('portal:use')) throw notFound('Law'); return {}; },
       write: async (id) => { await this.law(id); this.assertStaff(); },
@@ -101,10 +102,13 @@ export class ComplianceService implements OnModuleInit {
     const item = await this.prisma.db.checkItem.findUnique({ where: { id: itemId }, include: { cycle: true } });
     if (!item) throw notFound('Checklist item');
     if (this.isDeptUser(item.cycle.departmentId)) {
-      if (write && !['ISSUED', 'IN_PROGRESS'].includes(item.cycle.status)) throw conflict('This checklist has been submitted');
+      // Yes/No confirmations stay changeable all year (a "No" becomes "Yes" once the department complies).
+      if (write && ['SUBMITTED', 'UNDER_REVIEW'].includes(item.cycle.status)) throw conflict('This checklist is with the Legal Department for review');
       return item;
     }
-    if (write) this.assertStaff(); else if (!this.isLegal()) throw notFound('Checklist item');
+    // Another department's item: 404, never "forbidden" (do not confirm it exists).
+    if (!this.isLegal()) throw notFound('Checklist item');
+    if (write) this.assertStaff();
     return item;
   }
 
@@ -148,7 +152,11 @@ export class ComplianceService implements OnModuleInit {
       return r;
     });
     if (data.officerId && data.officerId !== before?.officerId) await this.notifications.notify([data.officerId], { type: 'cmp.law.assigned', title: `You are the compliance officer for "${row.title}"`, link: `/compliance/laws/${row.id}` });
-    await this.audit.log({ action: id ? 'cmp.law.updated' : 'cmp.law.created', entityType: 'Law', entityId: row.id, before, after: row });
+    if (!id) await this.audit.log({ action: 'cmp.law.created', entityType: 'Law', entityId: row.id, after: row });
+    else {
+      const diff = changedFields(before as unknown as Record<string, unknown>, data);
+      if (diff) await this.audit.log({ action: 'cmp.law.updated', entityType: 'Law', entityId: row.id, ...diff });
+    }
     return row;
   }
 
@@ -173,8 +181,14 @@ export class ComplianceService implements OnModuleInit {
     const depts = await this.prisma.base.department.count({ where: { id: { in: data.departmentIds } } });
     if (depts !== data.departmentIds.length) throw badRequest('Unknown department');
     const before = id ? await this.prisma.db.obligation.findUnique({ where: { id } }) : null;
-    const row = id ? await this.prisma.db.obligation.update({ where: { id }, data }) : await this.prisma.db.obligation.create({ data: { ...data, nextCheckAt: new Date() } });
-    await this.audit.log({ action: id ? 'cmp.obligation.updated' : 'cmp.obligation.created', entityType: 'Obligation', entityId: row.id, before, after: row });
+    // A department added later is asked straight away (next daily run / "Issue due checklists now"), not next year.
+    const newDept = !!before && data.departmentIds.some((d) => !before.departmentIds.includes(d));
+    const row = id ? await this.prisma.db.obligation.update({ where: { id }, data: { ...data, ...(newDept ? { nextCheckAt: new Date() } : {}) } }) : await this.prisma.db.obligation.create({ data: { ...data, nextCheckAt: new Date() } });
+    if (!id) await this.audit.log({ action: 'cmp.obligation.created', entityType: 'Obligation', entityId: row.id, after: row, meta: { lawId: data.lawId } });
+    else {
+      const diff = changedFields(before as unknown as Record<string, unknown>, data);
+      if (diff) await this.audit.log({ action: 'cmp.obligation.updated', entityType: 'Obligation', entityId: row.id, ...diff, meta: { lawId: data.lawId } });
+    }
     return row;
   }
 
@@ -389,6 +403,153 @@ export class ComplianceService implements OnModuleInit {
     return { ok: true };
   }
 
+  // ------------------------------------------------------------------ department yes/no confirmations
+  /**
+   * The department confirms each obligation itself: YES (we comply) closes the item; NO keeps it
+   * open and the department is reminded until it says YES. Ensuring compliance is the department's
+   * responsibility; Legal only checks that every department has confirmed.
+   */
+  async answer(itemId: string, input: { answer: 'YES' | 'NO'; comment?: string | null }) {
+    const item = await this.assertItemAccess(itemId, true);
+    const onBehalf = !this.isDeptUser(item.cycle.departmentId);
+    const now = new Date();
+    await this.prisma.tx(async (tx) => {
+      await tx.checkItem.update({
+        where: { id: itemId },
+        data: { answer: input.answer, answeredAt: now, closedAt: input.answer === 'YES' ? now : null, respondedById: currentUser().id, ...(input.comment !== undefined ? { response: input.comment } : {}) },
+      });
+      const open = await tx.checkItem.count({ where: { cycleId: item.cycleId, OR: [{ answer: null }, { answer: 'NO' }] } });
+      if (open === 0) await tx.checkCycle.update({ where: { id: item.cycleId }, data: { status: 'COMPLETED', completedAt: now } });
+      else if (item.cycle.status !== 'IN_PROGRESS') await tx.checkCycle.update({ where: { id: item.cycleId }, data: { status: 'IN_PROGRESS', completedAt: null } });
+    });
+    const after = await this.prisma.db.checkCycle.findUniqueOrThrow({ where: { id: item.cycleId } });
+    if (after.status === 'COMPLETED') {
+      await this.sla.stop({ subjectType: 'CheckCycle', subjectId: item.cycleId });
+      await this.calendar.cancel('CheckCycle', item.cycleId);
+    }
+    await this.audit.log({ action: `cmp.item.answered.${input.answer.toLowerCase()}`, entityType: 'CheckItem', entityId: itemId, before: { answer: item.answer }, after: { answer: input.answer }, meta: { cycleId: item.cycleId, onBehalf } });
+    return { ok: true, cycleStatus: after.status };
+  }
+
+  /** Daily: remind departments about obligations answered "No" or not answered after the due date (every N days). */
+  async answerReminders(now = new Date()) {
+    const days = (await this.settings.get<number>('compliance.reminderDays')) ?? 7;
+    const cutoff = new Date(now.getTime() - days * DAY);
+    const items = await this.prisma.db.checkItem.findMany({
+      where: {
+        cycle: { status: { not: 'COMPLETED' } },
+        OR: [{ answer: 'NO' }, { answer: null, cycle: { dueAt: { lt: now } } }],
+        AND: [{ OR: [{ lastReminderAt: null }, { lastReminderAt: { lt: cutoff } }] }],
+      },
+      include: { cycle: true, obligation: { select: { description: true } } },
+      take: 2000,
+    });
+    const byDept = new Map<string, typeof items>();
+    for (const i of items) byDept.set(i.cycle.departmentId, [...(byDept.get(i.cycle.departmentId) ?? []), i]);
+    for (const [departmentId, list] of byDept) {
+      const no = list.filter((i) => i.answer === 'NO').length;
+      const missing = list.length - no;
+      await this.notifications.notify(await this.focalPoints(departmentId), {
+        type: 'cmp.answer-reminder',
+        title: `Compliance: ${no ? `${no} obligation(s) not yet complied with` : ''}${no && missing ? ' and ' : ''}${missing ? `${missing} not yet answered` : ''}`,
+        body: list.slice(0, 10).map((i) => `- ${i.obligation.description.slice(0, 150)} (${i.answer === 'NO' ? 'answered No' : 'no answer'})`).join('\n'),
+        link: `/compliance/checks/${list[0]!.cycleId}`,
+      });
+      await this.prisma.db.checkItem.updateMany({ where: { id: { in: list.map((i) => i.id) } }, data: { lastReminderAt: now, reminderCount: { increment: 1 } } });
+    }
+    if (items.length) await this.audit.log({ action: 'cmp.answer-reminders', meta: { items: items.length, departments: byDept.size } });
+    return { reminded: items.length, departments: byDept.size };
+  }
+
+  /** Department-wise status for a year: obligations confirmed / not complied / unanswered, circular acknowledgements. */
+  async departmentReport(year?: number) {
+    if (!this.isLegal()) throw forbidden();
+    const y = year ?? new Date(Date.now() + 5 * 3600_000).getUTCFullYear();
+    const [depts, items, recipients] = await Promise.all([
+      this.prisma.base.department.findMany({ where: { active: true }, orderBy: { name: 'asc' }, select: { id: true, code: true, name: true } }),
+      this.prisma.db.checkItem.findMany({
+        where: { cycle: { period: { startsWith: String(y) } } },
+        include: { cycle: { select: { departmentId: true, period: true, dueAt: true } }, obligation: { select: { description: true, article: true, risk: true, law: { select: { title: true } } } } },
+      }),
+      this.prisma.db.disseminationRecipient.findMany({ where: { dissemination: { sentAt: { gte: new Date(Date.UTC(y, 0, 1) - 5 * 3600_000), lt: new Date(Date.UTC(y + 1, 0, 1) - 5 * 3600_000) } } }, select: { departmentId: true, acknowledgedAt: true } }),
+    ]);
+    const summary = depts.map((d) => {
+      const mine = items.filter((i) => i.cycle.departmentId === d.id);
+      const circ = recipients.filter((r) => r.departmentId === d.id);
+      const yes = mine.filter((i) => i.answer === 'YES').length;
+      const no = mine.filter((i) => i.answer === 'NO').length;
+      return {
+        id: d.id, department: d.name, code: d.code, obligations: mine.length, yes, no, unanswered: mine.length - yes - no,
+        confirmedPct: mine.length ? Math.round((yes / mine.length) * 100) : null,
+        circulars: circ.length, acknowledged: circ.filter((r) => r.acknowledgedAt).length,
+        remindersSent: mine.reduce((n, i) => n + i.reminderCount, 0),
+      };
+    }).filter((r) => r.obligations || r.circulars);
+    const detail = items.map((i) => ({
+      id: i.id, department: depts.find((d) => d.id === i.cycle.departmentId)?.name ?? '', period: i.cycle.period, law: i.obligation.law.title,
+      obligation: i.obligation.description, article: i.obligation.article ?? '', risk: i.obligation.risk, answer: i.answer ?? 'NOT ANSWERED',
+      answeredAt: i.answeredAt, comment: i.response ?? '', reminders: i.reminderCount, dueAt: i.cycle.dueAt,
+    })).sort((a, b) => a.department.localeCompare(b.department) || a.law.localeCompare(b.law));
+    return { year: y, summary, detail };
+  }
+
+  // ------------------------------------------------------------------ law research (HoD -> lawyer)
+  private isManager() {
+    const u = currentUser();
+    return u.isHod || u.roles.some((r) => r.role === 'UNIT_HEAD' && r.unit === 'CMP');
+  }
+
+  /** HoD/Unit Head assigns the research of a new or changed law to a lawyer. */
+  async assignResearch(lawId: string, input: { assigneeId: string; dueAt?: Date | null; note?: string | null }) {
+    if (!this.isManager()) throw forbidden('Only the HoD or the Compliance Unit Head can assign research');
+    const law = await this.law(lawId);
+    const assignee = await this.prisma.base.user.findFirst({ where: { id: input.assigneeId, status: 'ACTIVE', roles: { some: { OR: [{ role: 'HOD' }, { unit: 'CMP', role: { in: ['LEGAL_OFFICER', 'UNIT_HEAD'] } }] } } } });
+    if (!assignee) throw badRequest('Choose a lawyer of the Compliance unit');
+    const now = new Date();
+    await this.prisma.tx(async (tx) => {
+      await tx.law.update({ where: { id: lawId }, data: { researchStatus: 'ASSIGNED', researchAssigneeId: assignee.id, researchAssignedById: currentUser().id, researchAssignedAt: now, researchDueAt: input.dueAt ?? null, researchNote: input.note ?? null, researchCompletedAt: null, officerId: law.officerId ?? assignee.id } });
+      if (input.dueAt) await this.calendar.upsert({ kind: 'DEADLINE', unit: 'CMP', title: `Research due: ${law.title}`, sourceType: 'LawResearch', sourceId: lawId, startsAt: input.dueAt, allDay: true, ownerId: assignee.id }, tx);
+    });
+    await this.notifications.notify([assignee.id], { type: 'cmp.research', title: `Please research "${law.title}"`, body: input.note ?? undefined, link: `/compliance/laws/${lawId}` });
+    await this.audit.log({ action: 'cmp.research.assigned', entityType: 'Law', entityId: lawId, before: { status: law.researchStatus, assignee: law.researchAssigneeId }, after: { status: 'ASSIGNED', assignee: assignee.id, dueAt: input.dueAt ?? null } });
+    return { ok: true };
+  }
+
+  /** The lawyer records progress; COMPLETED needs the research findings (obligations and departments added on the law). */
+  async researchProgress(lawId: string, input: { status: 'IN_PROGRESS' | 'COMPLETED'; findings?: string | null }) {
+    const law = await this.law(lawId);
+    if (!law.researchStatus) throw conflict('No research has been assigned for this law');
+    const u = currentUser();
+    if (law.researchAssigneeId !== u.id && !this.isManager()) throw forbidden('Only the assigned lawyer can update this research');
+    const findings = input.findings !== undefined ? input.findings : law.researchFindings;
+    if (input.status === 'COMPLETED') {
+      if (!findings?.trim()) throw badRequest('Write the research findings before completing');
+      const obligations = await this.prisma.db.obligation.count({ where: { lawId, active: true } });
+      if (!obligations && !/no obligation/i.test(findings)) throw badRequest('Add the obligations (with their departments) on this law, or state "no obligations" in the findings');
+    }
+    await this.prisma.tx(async (tx) => {
+      await tx.law.update({ where: { id: lawId }, data: { researchStatus: input.status, researchFindings: findings ?? null, researchCompletedAt: input.status === 'COMPLETED' ? new Date() : null } });
+      if (input.status === 'COMPLETED') await this.calendar.cancel('LawResearch', lawId, tx);
+    });
+    if (input.status === 'COMPLETED' && law.researchAssignedById && law.researchAssignedById !== u.id) {
+      await this.notifications.notify([law.researchAssignedById], { type: 'cmp.research.done', title: `Research completed: "${law.title}"`, link: `/compliance/laws/${lawId}` });
+    }
+    await this.audit.log({ action: `cmp.research.${input.status === 'COMPLETED' ? 'completed' : 'progress'}`, entityType: 'Law', entityId: lawId, before: { status: law.researchStatus }, after: { status: input.status } });
+    return { ok: true };
+  }
+
+  async research(f: { mine?: boolean; status?: string }) {
+    if (!this.isLegal()) throw forbidden();
+    const rows = await this.prisma.db.law.findMany({
+      where: { researchStatus: f.status ? f.status : { not: null }, ...(f.mine ? { researchAssigneeId: currentUser().id } : {}) },
+      select: { id: true, title: true, type: true, researchStatus: true, researchAssigneeId: true, researchAssignedAt: true, researchDueAt: true, researchCompletedAt: true, _count: { select: { obligations: true } } },
+      orderBy: [{ researchDueAt: 'asc' }, { title: 'asc' }],
+    });
+    const users = await this.prisma.base.user.findMany({ where: { id: { in: rows.map((r) => r.researchAssigneeId).filter((x): x is string => !!x) } }, select: { id: true, displayName: true } });
+    const now = Date.now();
+    return rows.map((r) => ({ ...r, assigneeName: users.find((u) => u.id === r.researchAssigneeId)?.displayName ?? null, overdue: r.researchStatus !== 'COMPLETED' && !!r.researchDueAt && r.researchDueAt.getTime() < now }));
+  }
+
   // ------------------------------------------------------------------ findings
   async findings(f: { status?: string; departmentId?: string; severity?: string; overdue?: boolean }) {
     this.assertReader();
@@ -454,7 +615,7 @@ export class ComplianceService implements OnModuleInit {
   async dashboard() {
     if (!this.isLegal()) throw forbidden();
     const [items, findings, overdueCycles, depts, laws] = await Promise.all([
-      this.prisma.db.checkItem.findMany({ where: { rating: { not: null } }, select: { rating: true, obligation: { select: { lawId: true } }, cycle: { select: { departmentId: true, completedAt: true, submittedAt: true, createdAt: true } } } }),
+      this.prisma.db.checkItem.findMany({ where: { OR: [{ answer: { not: null } }, { rating: { not: null } }] }, select: { answer: true, rating: true, obligation: { select: { lawId: true } }, cycle: { select: { departmentId: true, completedAt: true, submittedAt: true, createdAt: true } } } }),
       this.prisma.db.finding.groupBy({ by: ['severity', 'status'], _count: true }),
       this.prisma.db.checkCycle.count({ where: { status: { in: ['ISSUED', 'IN_PROGRESS'] }, dueAt: { lt: new Date() } } }),
       this.prisma.base.department.findMany({ select: { id: true, name: true, code: true } }),
@@ -465,12 +626,14 @@ export class ComplianceService implements OnModuleInit {
       if (!rated.length) return null;
       return Math.round((rated.reduce((n, r) => n + (r === 'COMPLIANT' ? 1 : r === 'PARTIAL' ? 0.5 : 0), 0) / rated.length) * 100);
     };
+    // The department's own Yes/No answer is what counts; an officer rating is only used for older checklists.
+    const value = (i: { answer: string | null; rating: string | null }) => (i.answer === 'YES' ? 'COMPLIANT' : i.answer === 'NO' ? 'NON_COMPLIANT' : i.rating);
     const heat: { departmentId: string; department: string; lawId: string; law: string; score: number | null; items: number }[] = [];
     const key = (d: string, l: string) => `${d}|${l}`;
     const groups = new Map<string, (string | null)[]>();
     for (const i of items) {
       const k = key(i.cycle.departmentId, i.obligation.lawId);
-      groups.set(k, [...(groups.get(k) ?? []), i.rating]);
+      groups.set(k, [...(groups.get(k) ?? []), value(i)]);
     }
     for (const [k, rs] of groups) {
       const [d, l] = k.split('|');
@@ -479,12 +642,15 @@ export class ComplianceService implements OnModuleInit {
     const byMonth = new Map<string, (string | null)[]>();
     for (const i of items) {
       const m = (i.cycle.completedAt ?? i.cycle.submittedAt ?? i.cycle.createdAt).toISOString().slice(0, 7);
-      byMonth.set(m, [...(byMonth.get(m) ?? []), i.rating]);
+      byMonth.set(m, [...(byMonth.get(m) ?? []), value(i)]);
     }
     return {
       heat,
       trend: [...byMonth.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([month, rs]) => ({ month, score: score(rs) })),
-      overallScore: score(items.map((i) => i.rating)),
+      overallScore: score(items.map(value)),
+      notComplied: await this.prisma.db.checkItem.count({ where: { answer: 'NO', cycle: { status: { not: 'COMPLETED' } } } }),
+      unanswered: await this.prisma.db.checkItem.count({ where: { answer: null, rating: null, cycle: { status: { notIn: ['COMPLETED', 'SUBMITTED', 'UNDER_REVIEW'] } } } }),
+      researchOpen: await this.prisma.db.law.count({ where: { researchStatus: { in: ['ASSIGNED', 'IN_PROGRESS'] } } }),
       overdueChecks: overdueCycles,
       openFindings: findings.filter((f) => f.status !== 'CLOSED').map((f) => ({ severity: f.severity, status: f.status, count: f._count })),
       overdueFindings: await this.prisma.db.finding.count({ where: { status: { not: 'CLOSED' }, dueOn: { lt: new Date() } } }),

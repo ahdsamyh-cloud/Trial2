@@ -4,7 +4,7 @@ import { AdminNetwork, Authenticated, Can } from '../../common/decorators';
 import { currentUser } from '../../common/context';
 import { badRequest, forbidden, notFound } from '../../common/errors';
 import { PrismaService } from '../../common/prisma.service';
-import { parse, qs } from '../../common/zod';
+import { parse, qs, updatable } from '../../common/zod';
 import { AuditService } from '../audit/audit.service';
 import { CONFIG_ENTITIES, SETTINGS, SETTING_DEFAULTS } from './config.registry';
 import { SettingsService } from './settings.service';
@@ -74,7 +74,7 @@ export class ConfigController {
   @AdminNetwork()
   async update(@Param('entity') name: string, @Param('id') id: string, @Body() body: unknown) {
     const e = this.entity(name);
-    const data = parse((e.schema as z.ZodObject).partial(), body);
+    const data = parse(updatable(e.schema as z.ZodObject), body);
     const before = await this.delegate(e.model).findUnique({ where: { id } });
     if (!before) throw notFound();
     const row = await this.delegate(e.model).update({ where: { id }, data });

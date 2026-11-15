@@ -15,7 +15,7 @@ type Row = [string, string | number];
 interface Section { title: string; rows: Row[] }
 export interface ManagementReport { title: string; period: string; from: Date; to: Date; generatedAt: Date; sections: Section[] }
 
-/** Monthly / annual management report (PDF + Excel). Aggregates only; scope follows the caller. */
+/** Weekly / monthly / annual management report (PDF + Excel), for one unit or all. Aggregates only; scope follows the caller. */
 @Injectable()
 export class ReportsService {
   constructor(
@@ -27,7 +27,16 @@ export class ReportsService {
     private readonly alerts: SecurityAlerts,
   ) {}
 
-  private range(kind: 'monthly' | 'annual', period: string) {
+  private range(kind: 'weekly' | 'monthly' | 'annual', period: string) {
+    if (kind === 'weekly') {
+      // The Sunday–Saturday week (Maldives working week starts on Sunday) that contains the given date.
+      const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(period);
+      if (!d) throw badRequest('For a weekly report give any date of the week, e.g. 2026-11-15');
+      const day = Date.UTC(Number(d[1]), Number(d[2]) - 1, Number(d[3]));
+      const sunday = day - new Date(day).getUTCDay() * 86400_000;
+      const from = new Date(sunday - 5 * 3600_000);
+      return { from, to: new Date(from.getTime() + 7 * 86400_000) };
+    }
     const m = kind === 'monthly' ? /^(\d{4})-(\d{2})$/.exec(period) : /^(\d{4})$/.exec(period);
     if (!m) throw badRequest(kind === 'monthly' ? 'Period must look like 2026-11' : 'Period must look like 2026');
     const y = Number(m[1]);
@@ -37,12 +46,14 @@ export class ReportsService {
     return { from, to };
   }
 
-  async build(kind: 'monthly' | 'annual', period: string): Promise<ManagementReport> {
+  async build(kind: 'weekly' | 'monthly' | 'annual', period: string, onlyUnit: Unit | null = null): Promise<ManagementReport> {
     const user = currentUser();
     const grant = user.perms.get('report:read');
     if (!grant) throw forbidden();
     const { from, to } = this.range(kind, period);
-    const units: Unit[] = grant.scope === 'UNIT' ? (grant.units as Unit[]) : [...UNITS];
+    const allowedUnits: Unit[] = grant.scope === 'UNIT' ? (grant.units as Unit[]) : [...UNITS];
+    if (onlyUnit && !allowedUnits.includes(onlyUnit)) throw forbidden('You cannot run reports for that unit');
+    const units: Unit[] = onlyUnit ? [onlyUnit] : allowedUnits;
     const aggregateOnly = grant.scope === 'AGG';
     const scope: Prisma.MatterWhereInput = aggregateOnly ? {} : this.policy.matterScope('matter:read');
     const compute = async () => {
@@ -89,16 +100,15 @@ export class ReportsService {
         ] });
       }
       if (units.includes('CMP')) {
-        const [rated, findingsOpened, findingsClosed, acks, ackTotal] = await Promise.all([
-          this.prisma.db.checkItem.findMany({ where: { rating: { not: null }, cycle: { completedAt: { gte: from, lt: to } } }, select: { rating: true } }),
-          this.prisma.db.finding.count({ where: { createdAt: { gte: from, lt: to } } }),
-          this.prisma.db.finding.count({ where: { closedAt: { gte: from, lt: to } } }),
+        const [answers, newLaws, researchDone, acks, ackTotal] = await Promise.all([
+          this.prisma.db.checkItem.findMany({ where: { answeredAt: { gte: from, lt: to } }, select: { answer: true } }),
+          this.prisma.db.law.count({ where: { createdAt: { gte: from, lt: to } } }),
+          this.prisma.db.law.count({ where: { researchCompletedAt: { gte: from, lt: to } } }),
           this.prisma.db.disseminationRecipient.count({ where: { acknowledgedAt: { not: null }, dissemination: { sentAt: { gte: from, lt: to } } } }),
           this.prisma.db.disseminationRecipient.count({ where: { dissemination: { sentAt: { gte: from, lt: to } } } }),
         ]);
-        const r = rated.filter((x) => x.rating !== 'NA');
-        const score = r.length ? Math.round((r.reduce((n, x) => n + (x.rating === 'COMPLIANT' ? 1 : x.rating === 'PARTIAL' ? 0.5 : 0), 0) / r.length) * 100) : null;
-        sections.push({ title: 'Compliance', rows: [['Items rated', rated.length], ['Compliance score', score === null ? '—' : `${score}%`], ['Findings opened', findingsOpened], ['Findings closed', findingsClosed], ['Circular acknowledgements', `${acks} / ${ackTotal}`]] });
+        const yes = answers.filter((a) => a.answer === 'YES').length;
+        sections.push({ title: 'Compliance', rows: [['New laws registered', newLaws], ['Research completed', researchDone], ['Department answers', answers.length], ['Answered Yes (complies)', yes], ['Answered No', answers.length - yes], ['Circular acknowledgements', `${acks} / ${ackTotal}`]] });
       }
       if (units.includes('AWR')) {
         const sessions = await this.prisma.db.awarenessSession.findMany({ where: { startsAt: { gte: from, lt: to }, status: { in: ['HELD', 'FEEDBACK_COLLECTED', 'CLOSED'] } }, include: { _count: { select: { attendance: true } }, feedback: { select: { rating: true } } } });
@@ -108,7 +118,7 @@ export class ReportsService {
       return sections;
     };
     const sections = aggregateOnly ? await runAsSystem(compute) : await compute();
-    return { title: `Legal Department ${kind === 'monthly' ? 'monthly' : 'annual'} management report`, period, from, to, generatedAt: new Date(), sections };
+    return { title: `${onlyUnit ? UNIT_NAMES[onlyUnit] : 'Legal Department'} ${kind} management report`, period, from, to, generatedAt: new Date(), sections };
   }
 
   async xlsx(r: ManagementReport): Promise<Buffer> {

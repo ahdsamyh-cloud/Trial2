@@ -6,7 +6,7 @@ import { currentUser } from '../../common/context';
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors';
 import { logger } from '../../common/logger';
 import { PrismaService, Tx } from '../../common/prisma.service';
-import { AuditService } from '../../core/audit/audit.service';
+import { AuditService, changedFields } from '../../core/audit/audit.service';
 import { CalendarService } from '../../core/calendar/calendar.service';
 import { SettingsService } from '../../core/config/settings.service';
 import { DocumentsService } from '../../core/documents/documents.service';
@@ -166,7 +166,8 @@ export class LitigationService implements OnModuleInit {
     const before = await this.prisma.db.litigationCase.findUniqueOrThrow({ where: { matterId: id } });
     if (data.courtCaseNo && data.courtCaseNo !== before.courtCaseNo) await this.assertNoDuplicate(data.courtCaseNo, id);
     if (data.responsibleOfficerId) await this.matters.assertLegalStaff(data.responsibleOfficerId, 'LIT');
-    const { exposure, title, description, parties: _p, restricted: _r, status: _s, priority, requestingDeptId, importBatchId: _i, ...rest } = data;
+    const { exposure, title, description, parties, restricted: _r, status: _s, priority, requestingDeptId, importBatchId: _i, ...rest } = data;
+    const beforeParties = parties ? await this.prisma.db.caseParty.findMany({ where: { caseId: id }, orderBy: { id: 'asc' } }) : [];
     await this.prisma.tx(async (tx) => {
       await tx.litigationCase.update({
         where: { matterId: id },
@@ -179,9 +180,17 @@ export class LitigationService implements OnModuleInit {
         await tx.matterAssignment.deleteMany({ where: { matterId: id, role: 'ASSIGNEE' } });
         await tx.matterAssignment.create({ data: { matterId: id, userId: data.responsibleOfficerId, role: 'ASSIGNEE' } });
       }
+      if (parties) {
+        await tx.caseParty.deleteMany({ where: { caseId: id } });
+        if (parties.length) await tx.caseParty.createMany({ data: parties.map((p) => ({ caseId: id, name: p.name, side: p.side, counsel: p.counsel ?? null })) });
+      }
     });
     if (description !== undefined) await this.matters.update(id, { description });
-    await this.audit.log({ action: 'lit.case.updated', entityType: 'Matter', entityId: id, before: { ...before, exposureEnc: undefined }, after: { ...rest, exposure: exposure !== undefined ? '[changed]' : undefined } });
+    const diff = changedFields(
+      { ...before, exposure: this.crypto.decrypt(before.exposureEnc), parties: beforeParties.map((p) => ({ name: p.name, side: p.side, counsel: p.counsel })) } as unknown as Record<string, unknown>,
+      { ...rest, ...(exposure !== undefined ? { exposure } : {}), ...(parties ? { parties: parties.map((p) => ({ name: p.name, side: p.side, counsel: p.counsel ?? null })) } : {}) },
+    );
+    if (diff) await this.audit.log({ action: 'lit.case.updated', entityType: 'Matter', entityId: id, ...diff });
     return this.get(id);
   }
 
@@ -226,7 +235,7 @@ export class LitigationService implements OnModuleInit {
     const c = await this.prisma.db.litigationCase.findUniqueOrThrow({ where: { matterId: h.caseId } });
     await this.prisma.db.hearing.update({ where: { id: hearingId }, data: { status: held } });
     if (held === 'CANCELLED') await this.calendar.cancel('Hearing', hearingId);
-    if (held !== 'CANCELLED' && !h.summaryEnteredAt) {
+    if ((held === 'HELD' || held === 'ADJOURNED') && !h.summaryEnteredAt) {
       const existing = await this.prisma.db.slaClock.count({ where: { subjectType: 'Hearing', subjectId: hearingId } });
       if (!existing) await this.sla.start({ policyCode: 'LIT_HEARING_SUMMARY', step: 'LIT_HEARING_SUMMARY', startedAt: h.startsAt < new Date() ? h.startsAt : new Date(), matterId: h.caseId, subjectType: 'Hearing', subjectId: hearingId, ownerId: c.responsibleOfficerId });
     }
@@ -259,6 +268,69 @@ export class LitigationService implements OnModuleInit {
     return { ok: true, nextHearingId: nextId };
   }
 
+  /**
+   * Edit any hearing field, including the chit summary and an entered hearing summary.
+   * Only changed fields are written to the audit trail (before/after).
+   */
+  async updateHearing(hearingId: string, d: {
+    startsAt?: Date; courtId?: string | null; judge?: string | null; purpose?: string | null; chitSummary?: string | null; outcome?: string | null;
+    summary?: { whatHappened: string; ordersMade?: string; nextSteps?: string; companyActions?: string };
+  }) {
+    const h = await this.hearing(hearingId);
+    const m = await this.writable(h.caseId);
+    const { summary, ...fields } = d;
+    const data: Prisma.HearingUpdateInput = { ...fields } as Prisma.HearingUpdateInput;
+    if (summary) data.summary = { whatHappened: summary.whatHappened, ordersMade: summary.ordersMade ?? '', nextSteps: summary.nextSteps ?? '', companyActions: summary.companyActions ?? '' };
+    await this.prisma.tx(async (tx) => {
+      await tx.hearing.update({ where: { id: hearingId }, data });
+      if (d.startsAt && d.startsAt.getTime() !== h.startsAt.getTime() && h.status === 'SCHEDULED') {
+        const c = await tx.litigationCase.findUniqueOrThrow({ where: { matterId: h.caseId } });
+        await this.calendar.upsert({ kind: 'HEARING', unit: 'LIT', title: `${m.reference} hearing${c.courtCaseNo ? ` (${c.courtCaseNo})` : ''}`, sourceType: 'Hearing', sourceId: hearingId, startsAt: d.startsAt, ownerId: c.responsibleOfficerId, matterId: h.caseId, restricted: m.restricted }, tx);
+      }
+      await tx.litigationCase.update({ where: { matterId: h.caseId }, data: { lastUpdateAt: new Date() } });
+    });
+    const diff = changedFields(h as unknown as Record<string, unknown>, { ...fields, ...(summary ? { summary: data.summary } : {}) });
+    if (diff) await this.audit.log({ action: 'lit.hearing.updated', entityType: 'Hearing', entityId: hearingId, ...diff, meta: { matterId: h.caseId } });
+    return { ok: true };
+  }
+
+  /** Postpone: this hearing becomes POSTPONED (no summary needed) and a new hearing is created on the new date. */
+  async postponeHearing(hearingId: string, p: { startsAt: Date; reason: string; continuance?: boolean }) {
+    const h = await this.hearing(hearingId);
+    await this.writable(h.caseId);
+    if (!['SCHEDULED', 'ADJOURNED'].includes(h.status)) throw conflict('Only a scheduled hearing can be postponed');
+    const next = await this.addHearing(h.caseId, { startsAt: p.startsAt, courtId: h.courtId, judge: h.judge, purpose: h.purpose });
+    await this.prisma.db.hearing.update({
+      where: { id: hearingId },
+      data: { status: 'POSTPONED', postponeReason: p.reason, nextHearingId: next.id, ...(p.continuance ? { continuanceStatus: 'GRANTED' } : {}) },
+    });
+    await this.calendar.cancel('Hearing', hearingId);
+    await this.sla.stop({ subjectType: 'Hearing', subjectId: hearingId });
+    await this.audit.log({ action: p.continuance ? 'lit.hearing.continuance.granted' : 'lit.hearing.postponed', entityType: 'Hearing', entityId: hearingId, before: { status: h.status, startsAt: h.startsAt }, after: { status: 'POSTPONED', newHearingAt: p.startsAt, reason: p.reason }, meta: { matterId: h.caseId, nextHearingId: next.id } });
+    return { ok: true, nextHearingId: next.id };
+  }
+
+  /** Request for continuance: REQUEST it, then record the court's decision (GRANTED moves the hearing to a new date). */
+  async continuance(hearingId: string, c: { action: 'REQUEST' | 'GRANTED' | 'DENIED'; note?: string | null; startsAt?: Date | null }) {
+    const h = await this.hearing(hearingId);
+    await this.writable(h.caseId);
+    if (c.action === 'REQUEST') {
+      if (!['SCHEDULED', 'ADJOURNED'].includes(h.status)) throw conflict('A continuance can only be requested for a scheduled hearing');
+      await this.prisma.db.hearing.update({ where: { id: hearingId }, data: { continuanceStatus: 'REQUESTED', continuanceRequestedAt: new Date(), continuanceNote: c.note ?? null } });
+      await this.audit.log({ action: 'lit.hearing.continuance.requested', entityType: 'Hearing', entityId: hearingId, after: { note: c.note ?? null }, meta: { matterId: h.caseId } });
+      return { ok: true };
+    }
+    if (h.continuanceStatus !== 'REQUESTED') throw conflict('No continuance request is pending for this hearing');
+    if (c.action === 'GRANTED') {
+      if (!c.startsAt) throw badRequest('Enter the new hearing date given by the court');
+      if (c.note) await this.prisma.db.hearing.update({ where: { id: hearingId }, data: { continuanceNote: c.note } });
+      return this.postponeHearing(hearingId, { startsAt: c.startsAt, reason: c.note || 'Continuance granted', continuance: true });
+    }
+    await this.prisma.db.hearing.update({ where: { id: hearingId }, data: { continuanceStatus: 'DENIED', ...(c.note ? { continuanceNote: c.note } : {}) } });
+    await this.audit.log({ action: 'lit.hearing.continuance.denied', entityType: 'Hearing', entityId: hearingId, after: { note: c.note ?? null }, meta: { matterId: h.caseId } });
+    return { ok: true };
+  }
+
   // ------------------------------------------------------------------ deadlines
   async addDeadline(caseId: string, d: { type: string; title: string; dueAt: Date; ownerId?: string | null }) {
     const m = await this.writable(caseId);
@@ -270,6 +342,20 @@ export class LitigationService implements OnModuleInit {
     });
     await this.audit.log({ action: 'lit.deadline.added', entityType: 'CaseDeadline', entityId: row.id, after: d });
     return row;
+  }
+
+  async updateDeadline(id: string, d: { type?: string; title?: string; dueAt?: Date; ownerId?: string | null }) {
+    const before = await this.prisma.db.caseDeadline.findUnique({ where: { id } });
+    if (!before) throw notFound('Deadline');
+    const m = await this.writable(before.caseId);
+    if (d.ownerId) await this.matters.assertLegalStaff(d.ownerId, 'LIT');
+    await this.prisma.tx(async (tx) => {
+      const r = await tx.caseDeadline.update({ where: { id }, data: d });
+      if (r.status === 'OPEN') await this.calendar.upsert({ kind: r.type === 'LIMITATION' ? 'LIMITATION' : 'DEADLINE', unit: 'LIT', title: `${m.reference}: ${r.title}`, sourceType: 'CaseDeadline', sourceId: id, startsAt: r.dueAt, allDay: true, ownerId: r.ownerId, matterId: before.caseId, restricted: m.restricted }, tx);
+    });
+    const diff = changedFields(before as unknown as Record<string, unknown>, d);
+    if (diff) await this.audit.log({ action: 'lit.deadline.updated', entityType: 'CaseDeadline', entityId: id, ...diff, meta: { matterId: before.caseId } });
+    return { ok: true };
   }
 
   async completeDeadline(id: string, status: 'DONE' | 'MISSED' | 'OPEN') {
@@ -295,6 +381,26 @@ export class LitigationService implements OnModuleInit {
     const e = await this.prisma.db.engagement.findUnique({ where: { id } });
     if (!e) throw notFound('Engagement');
     return e;
+  }
+
+  async updateEngagement(id: string, d: { feeArrangement?: string | null; budget?: string | null; currency?: string; startedOn?: Date | null }) {
+    const before = await this.engagement(id);
+    await this.writable(before.caseId);
+    await this.prisma.db.engagement.update({ where: { id }, data: d });
+    const diff = changedFields(before as unknown as Record<string, unknown>, d);
+    if (diff) await this.audit.log({ action: 'lit.engagement.updated', entityType: 'Engagement', entityId: id, ...diff, meta: { matterId: before.caseId } });
+    return { ok: true };
+  }
+
+  async updateInvoice(id: string, d: { invoiceNo?: string; amount?: string; currency?: string; receivedOn?: Date; notes?: string | null }) {
+    const before = await this.prisma.db.counselInvoice.findUnique({ where: { id }, include: { engagement: true } });
+    if (!before) throw notFound('Invoice');
+    await this.writable(before.engagement.caseId);
+    await this.prisma.db.counselInvoice.update({ where: { id }, data: d });
+    const { engagement: _e, ...b } = before;
+    const diff = changedFields(b as unknown as Record<string, unknown>, d);
+    if (diff) await this.audit.log({ action: 'lit.invoice.updated', entityType: 'CounselInvoice', entityId: id, ...diff, meta: { matterId: before.engagement.caseId } });
+    return { ok: true };
   }
 
   async addInvoice(engagementId: string, i: { invoiceNo: string; amount: string; currency?: string; receivedOn: Date; notes?: string | null }) {
@@ -331,6 +437,16 @@ export class LitigationService implements OnModuleInit {
     return row;
   }
 
+  async updateCounselUpdate(id: string, d: { receivedAt?: Date; channel?: string; summary?: string }) {
+    const before = await this.prisma.db.counselUpdate.findUnique({ where: { id } });
+    if (!before) throw notFound('Update');
+    await this.writable(before.caseId);
+    await this.prisma.db.counselUpdate.update({ where: { id }, data: d });
+    const diff = changedFields(before as unknown as Record<string, unknown>, d);
+    if (diff) await this.audit.log({ action: 'lit.counsel-update.edited', entityType: 'CounselUpdate', entityId: id, ...diff, meta: { matterId: before.caseId } });
+    return { ok: true };
+  }
+
   async evaluate(caseId: string, e: { quality: number; responsiveness: number; cost: number; outcome: number; comments?: string | null }) {
     await this.writable(caseId);
     const c = await this.prisma.db.litigationCase.findUniqueOrThrow({ where: { matterId: caseId } });
@@ -352,12 +468,14 @@ export class LitigationService implements OnModuleInit {
     return row;
   }
 
-  async updateOutcome(id: string, data: { paymentStatus?: string; amount?: string | null }) {
+  async updateOutcome(id: string, data: { paymentStatus?: string; amount?: string | null; kind?: string; decidedOn?: Date; currency?: string; direction?: string; terms?: string | null }) {
     const o = await this.prisma.db.outcome.findUnique({ where: { id } });
     if (!o) throw notFound('Outcome');
     await this.writable(o.caseId);
-    await this.prisma.db.outcome.update({ where: { id }, data: { ...(data.paymentStatus ? { paymentStatus: data.paymentStatus } : {}), ...(data.amount !== undefined ? { amountEnc: data.amount ? this.crypto.encrypt(data.amount) : null } : {}) } });
-    await this.audit.log({ action: 'lit.outcome.updated', entityType: 'Outcome', entityId: id, after: { paymentStatus: data.paymentStatus, amount: data.amount !== undefined ? '[changed]' : undefined } });
+    const { amount, ...rest } = data;
+    await this.prisma.db.outcome.update({ where: { id }, data: { ...rest, ...(amount !== undefined ? { amountEnc: amount ? this.crypto.encrypt(amount) : null } : {}) } });
+    const diff = changedFields(o as unknown as Record<string, unknown>, { ...rest, ...(amount !== undefined && this.crypto.decrypt(o.amountEnc) !== amount ? { amount: '[changed]' } : {}) });
+    if (diff) await this.audit.log({ action: 'lit.outcome.updated', entityType: 'Outcome', entityId: id, ...diff, meta: { matterId: o.caseId } });
     return { ok: true };
   }
 

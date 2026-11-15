@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useState } from 'react';
-import { api } from '@/lib/api';
+import { api, download } from '@/lib/api';
 import { useApi, useAction } from '@/lib/hooks';
 import { fmtDate, label } from '@/lib/format';
 import { t } from '@/lib/i18n';
@@ -16,31 +16,30 @@ export default function Compliance() {
   const staff = can('matter:read', 'CMP') || can('cmp:write', 'CMP') || can('dashboard:hod');
   const [tab, setTab] = useState(staff ? 'dashboard' : 'mine');
   const tabs = staff
-    ? [{ id: 'dashboard', label: t('Dashboard') }, { id: 'laws', label: t('Laws & regulations') }, { id: 'obligations', label: t('Obligations') }, { id: 'circulars', label: t('Circulars') }, { id: 'checks', label: t('Checks') }, { id: 'findings', label: t('Findings') }, { id: 'licences', label: t('Licences & filings') }, { id: 'changes', label: t('Change log') }]
+    ? [{ id: 'dashboard', label: t('Dashboard') }, { id: 'research', label: t('Research') }, { id: 'laws', label: t('Laws & regulations') }, { id: 'obligations', label: t('Obligations') }, { id: 'circulars', label: t('Circulars') }, { id: 'checks', label: t('Department confirmations') }, { id: 'report', label: t('Department report') }, { id: 'licences', label: t('Licences & filings') }, { id: 'changes', label: t('Change log') }]
     : [{ id: 'mine', label: t('My department') }, { id: 'laws', label: t('Laws & regulations') }];
   return (
     <div>
-      <PageHeader title={t('Compliance')} subtitle={staff ? t('Laws, obligations, circulars, periodic checks and remediation.') : t('Circulars to acknowledge, checklists to answer and findings to fix.')} />
+      <PageHeader title={t('Compliance')} subtitle={staff ? t('Research of laws, obligations by department, circulars and yearly department confirmations.') : t('Circulars to acknowledge and obligations to confirm (yes / no).')} />
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
-      {tab === 'dashboard' ? <Dashboard /> : tab === 'laws' ? <Laws /> : tab === 'obligations' ? <Obligations /> : tab === 'circulars' ? <Circulars /> : tab === 'checks' ? <Checks /> : tab === 'findings' ? <Findings /> : tab === 'licences' ? <Licences /> : tab === 'changes' ? <Changes /> : <MyDepartment />}
+      {tab === 'dashboard' ? <Dashboard /> : tab === 'research' ? <Research /> : tab === 'laws' ? <Laws /> : tab === 'obligations' ? <Obligations /> : tab === 'circulars' ? <Circulars /> : tab === 'checks' ? <Checks /> : tab === 'report' ? <DeptReport /> : tab === 'findings' ? <Findings /> : tab === 'licences' ? <Licences /> : tab === 'changes' ? <Changes /> : <MyDepartment />}
     </div>
   );
 }
 
 function Dashboard() {
-  const { data } = useApi<{ heat: { departmentId: string; department: string; lawId: string; law: string; score: number | null }[]; trend: { month: string; score: number | null }[]; overallScore: number | null; overdueChecks: number; overdueFindings: number; pendingAcks: number; openFindings: { severity: string; count: number }[] }>('/compliance/dashboard');
+  const { data } = useApi<{ heat: { departmentId: string; department: string; lawId: string; law: string; score: number | null }[]; trend: { month: string; score: number | null }[]; overallScore: number | null; overdueChecks: number; pendingAcks: number; notComplied: number; unanswered: number; researchOpen: number }>('/compliance/dashboard');
   if (!data) return null;
-  const open = (s: string) => data.openFindings.filter((f) => f.severity === s).reduce((n, f) => n + f.count, 0);
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <Stat label={t('Compliance score')} value={data.overallScore === null ? '—' : `${data.overallScore}%`} tone={data.overallScore !== null && data.overallScore < 60 ? 'red' : 'green'} />
-        <Stat label={t('Overdue checklists')} value={data.overdueChecks} tone={data.overdueChecks ? 'red' : undefined} />
-        <Stat label={t('Open findings (high)')} value={open('HIGH')} tone={open('HIGH') ? 'red' : undefined} />
-        <Stat label={t('Overdue findings')} value={data.overdueFindings} tone={data.overdueFindings ? 'amber' : undefined} />
+        <Stat label={t('Obligations confirmed')} value={data.overallScore === null ? '—' : `${data.overallScore}%`} tone={data.overallScore !== null && data.overallScore < 60 ? 'red' : 'green'} />
+        <Stat label={t('Answered "No"')} value={data.notComplied} tone={data.notComplied ? 'red' : undefined} />
+        <Stat label={t('Not answered yet')} value={data.unanswered} tone={data.unanswered ? 'amber' : undefined} />
         <Stat label={t('Circulars not acknowledged')} value={data.pendingAcks} tone={data.pendingAcks ? 'amber' : undefined} />
+        <Stat label={t('Research in progress')} value={data.researchOpen} />
       </div>
-      <Card title={t('Heat map: department × law')}><HeatMap cells={data.heat} /></Card>
+      <Card title={t('Heat map: department × law (share of obligations confirmed)')}><HeatMap cells={data.heat} /></Card>
       <Card title={t('Compliance score trend')}>
         {!data.trend.length ? <Empty>{t('No data yet')}</Empty> : <ul className="flex flex-wrap gap-3 text-sm">{data.trend.map((p) => <li key={p.month} className="rounded border px-2 py-1"><span className="text-slate-500">{p.month}</span> <strong>{p.score ?? '—'}%</strong></li>)}</ul>}
       </Card>
@@ -137,7 +136,10 @@ function Checks() {
   const act = useAction();
   const name = (id: string) => depts.data?.find((d) => d.id === id)?.name ?? id;
   return (
-    <Card title={t('Periodic compliance checks')} actions={can('cmp:write', 'CMP') ? <Button size="sm" variant="secondary" busy={act.busy} onClick={() => act.run(async () => { await api.post('/compliance/cycles/run'); await reload(); })}>{t('Issue due checklists now')}</Button> : null}>
+    <Card title={t('Department confirmations (asked every year)')} actions={can('cmp:write', 'CMP') ? <>
+      <Button size="sm" variant="secondary" busy={act.busy} onClick={() => act.run(async () => { await api.post('/compliance/cycles/run'); await reload(); })}>{t('Issue due checklists now')}</Button>
+      <Button size="sm" variant="ghost" busy={act.busy} onClick={() => act.run(async () => { await api.post('/compliance/reminders/run'); })}>{t('Send reminders now')}</Button>
+    </> : null}>
       {act.error ? <Alert>{act.error}</Alert> : null}
       {!data?.length ? <Empty>{t('No checklists issued yet')}</Empty> : <ul className="divide-y text-sm">{data.map((c) => (
         <li key={c.id}><Link href={`/compliance/checks/${c.id}`} className="flex flex-wrap items-center justify-between gap-2 py-2 hover:bg-slate-50">
@@ -145,6 +147,47 @@ function Checks() {
           <span className="flex items-center gap-2 text-xs"><span className={['ISSUED', 'IN_PROGRESS'].includes(c.status) && new Date(c.dueAt) < new Date() ? 'font-semibold text-red-700' : ''}>{t('due')} {fmtDate(c.dueAt)}</span><StatusBadge value={c.status} /></span>
         </Link></li>
       ))}</ul>}
+    </Card>
+  );
+}
+
+function Research() {
+  const [mine, setMine] = useState(false);
+  const { data } = useApi<{ id: string; title: string; type: string; researchStatus: string; assigneeName: string | null; researchDueAt: string | null; researchCompletedAt: string | null; overdue: boolean; _count: { obligations: number } }[]>(`/compliance/research?mine=${mine}`, [mine]);
+  return (
+    <Card title={t('Research of laws')} actions={<label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} />{t('Only mine')}</label>}>
+      <p className="mb-2 text-xs text-slate-500">{t('The HoD or Unit Head assigns research from a law’s page. The lawyer adds the obligations and their departments, then completes the research.')}</p>
+      {!data?.length ? <Empty>{t('No research assigned')}</Empty> : <ul className="divide-y text-sm">{data.map((r) => (
+        <li key={r.id}><Link href={`/compliance/laws/${r.id}`} className="flex flex-wrap items-center justify-between gap-2 py-2 hover:bg-slate-50">
+          <span><span className="font-medium">{r.title}</span> <span className="text-xs text-slate-500">· {r.assigneeName ?? '—'} · {t('{n} obligations', { n: r._count.obligations })}</span></span>
+          <span className="flex items-center gap-2 text-xs"><span className={r.overdue ? 'font-semibold text-red-700' : ''}>{t('due')} {fmtDate(r.researchDueAt)}</span><StatusBadge value={r.researchStatus} /></span>
+        </Link></li>
+      ))}</ul>}
+    </Card>
+  );
+}
+
+function DeptReport() {
+  const [year, setYear] = useState(String(new Date().getFullYear()));
+  const { data } = useApi<{ year: number; summary: { id: string; department: string; obligations: number; yes: number; no: number; unanswered: number; confirmedPct: number | null; circulars: number; acknowledged: number; remindersSent: number }[] }>(`/compliance/reports/departments?year=${year}`, [year]);
+  const act = useAction();
+  return (
+    <Card title={t('Compliance by department')} actions={<>
+      <Input aria-label={t('Year')} className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => setYear(e.target.value.replace(/\D/g, ''))} />
+      <Button size="sm" variant="secondary" busy={act.busy} onClick={() => act.run(() => download(`/compliance/reports/departments?year=${year}&format=xlsx`, `compliance-by-department-${year}.xlsx`))}>{t('Export to Excel')}</Button>
+    </>}>
+      {act.error ? <Alert>{act.error}</Alert> : null}
+      {!data?.summary.length ? <Empty>{t('No obligations issued to departments for this year')}</Empty> : (
+        <div className="overflow-x-auto"><table className="w-full text-sm">
+          <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-2">{t('Department')}</th><th className="pr-2">{t('Obligations')}</th><th className="pr-2">{t('Yes')}</th><th className="pr-2">{t('No')}</th><th className="pr-2">{t('Not answered')}</th><th className="pr-2">{t('Confirmed')}</th><th className="pr-2">{t('Circulars ack.')}</th><th>{t('Reminders')}</th></tr></thead>
+          <tbody>{data.summary.map((r) => (
+            <tr key={r.id} className="border-b last:border-0">
+              <td className="py-2 pr-2 font-medium">{r.department}</td><td className="pr-2">{r.obligations}</td><td className="pr-2 text-green-700">{r.yes}</td><td className="pr-2 text-red-700">{r.no}</td>
+              <td className="pr-2 text-amber-700">{r.unanswered}</td><td className="pr-2">{r.confirmedPct === null ? '—' : `${r.confirmedPct}%`}</td><td className="pr-2">{r.acknowledged}/{r.circulars}</td><td>{r.remindersSent}</td>
+            </tr>
+          ))}</tbody>
+        </table></div>
+      )}
     </Card>
   );
 }
@@ -227,7 +270,6 @@ function Changes() {
 function MyDepartment() {
   const circ = useApi<{ id: string; subject: string; body: string; dueAt: string; recipients: { id: string; acknowledgedAt: string | null }[] }[]>('/compliance/disseminations');
   const cycles = useApi<{ id: string; period: string; dueAt: string; status: string; _count: { items: number } }[]>('/compliance/cycles');
-  const findings = useApi<{ id: string; title: string; severity: string; status: string; dueOn: string; departmentId: string }[]>('/compliance/findings');
   const act = useAction();
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -245,10 +287,9 @@ function MyDepartment() {
         })}</ul>}
       </Card>
       <div className="space-y-4">
-        <Card title={t('Checklists to answer')}>
+        <Card title={t('Obligations to confirm (yes / no)')}>
           {!cycles.data?.length ? <Empty>{t('None')}</Empty> : <ul className="divide-y text-sm">{cycles.data.map((c) => <li key={c.id}><Link className="flex items-center justify-between py-2 hover:bg-slate-50" href={`/compliance/checks/${c.id}`}><span>{c.period} · {t('{n} items', { n: c._count.items })}</span><span className="flex items-center gap-2 text-xs">{t('due')} {fmtDate(c.dueAt)} <StatusBadge value={c.status} /></span></Link></li>)}</ul>}
         </Card>
-        <Card title={t('Findings to fix')}><FindingList rows={findings.data} name={() => ''} /></Card>
       </div>
     </div>
   );

@@ -4,7 +4,7 @@ import { availableActions, DraftingAction, draftingMachine, DraftingStatus, find
 import { currentUser, AuthUser } from '../../common/context';
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors';
 import { PrismaService, Tx } from '../../common/prisma.service';
-import { AuditService } from '../../core/audit/audit.service';
+import { AuditService, changedFields } from '../../core/audit/audit.service';
 import { CalendarService } from '../../core/calendar/calendar.service';
 import { SettingsService } from '../../core/config/settings.service';
 import { DocumentsService } from '../../core/documents/documents.service';
@@ -14,6 +14,9 @@ import { MattersService } from '../../core/matters/matters.service';
 import { NotificationsService } from '../../core/notifications/notifications.service';
 import { PolicyService } from '../../core/policy/policy.service';
 import { SlaService } from '../../core/sla/sla.service';
+
+/** Steps that belong to the drafter; the HoD/Unit Head may take them on the drafter's behalf. */
+const DRAFTER_STEPS: DraftingAction[] = ['start', 'request_info', 'info_received', 'submit_review', 'send', 'require_follow_up', 'close'];
 
 interface HodRules { enabled: boolean; minContractValue: number | null; restricted: boolean; requestTypeCodes: string[] }
 
@@ -102,8 +105,102 @@ export class DraftingService implements OnModuleInit {
     await this.policy.assertWrite(m);
     const before = await this.prisma.db.draftingRequest.findUniqueOrThrow({ where: { matterId: id } });
     const after = await this.prisma.db.draftingRequest.update({ where: { matterId: id }, data });
-    await this.audit.log({ action: 'drf.request.updated', entityType: 'Matter', entityId: id, before, after });
+    const diff = changedFields(before as unknown as Record<string, unknown>, data);
+    if (diff) await this.audit.log({ action: 'drf.request.updated', entityType: 'Matter', entityId: id, ...diff });
     return after;
+  }
+
+  // ------------------------------------------------------------------ versions of a request
+  /**
+   * The same request often comes back after it was completed (a contract renewal, a policy revised
+   * again). Starting a NEW VERSION creates a new drafting request linked to the previous one, so the
+   * whole history - every earlier request, its documents and decisions - stays visible side by side.
+   */
+  async newVersion(id: string, input: { title?: string; note?: string | null }) {
+    const { m, d } = await this.load(id);
+    if (!this.policy.covers('draft:draft', 'DRF') && !this.policy.covers('intake:triage', 'DRF')) throw forbidden();
+    const created = await this.prisma.tx(async (tx) => {
+      const matter = await this.matters.create(tx, {
+        unit: 'DRF', title: input.title?.trim() || m.title, description: input.note ?? null, requestTypeId: m.requestTypeId ?? undefined, priority: m.priority,
+        requestingDeptId: m.requestingDeptId, requesterId: m.requesterId, requesterName: m.requesterName, restricted: m.restricted, status: 'REGISTERED',
+      });
+      // A restricted request stays behind the same ethical wall in its new version.
+      if (m.restricted) {
+        const named = await tx.matterAccess.findMany({ where: { matterId: id }, select: { userId: true } });
+        await tx.matterAccess.createMany({ data: named.map((n) => ({ matterId: matter.id, userId: n.userId, grantedById: currentUser().id })), skipDuplicates: true });
+      }
+      await tx.statusTransition.create({ data: { matterId: matter.id, fromStatus: 'RECEIVED', toStatus: 'REGISTERED', action: 'register', actorId: currentUser().id, comment: `New version of ${m.reference}` } });
+      await tx.draftingRequest.create({ data: { matterId: matter.id, counterparty: d.counterparty, contractValue: d.contractValue, currency: d.currency } });
+      await tx.matterLink.create({ data: { fromId: matter.id, toId: id, kind: 'PREVIOUS_VERSION' } });
+      return matter;
+    });
+    await this.sla.start({ policyCode: 'ASSIGN', step: 'ASSIGN', matterId: created.id, urgent: created.priority === 'URGENT' });
+    await this.audit.log({ action: 'drf.request.new-version', entityType: 'Matter', entityId: created.id, after: { previous: m.reference }, meta: { matterId: id } });
+    return { id: created.id, reference: created.reference };
+  }
+
+  /** Every version of this request, oldest first (follows PREVIOUS_VERSION links both ways; only what the user may see). */
+  async versions(id: string) {
+    await this.load(id);
+    const seen = new Set<string>([id]);
+    const queue = [id];
+    while (queue.length && seen.size < 50) {
+      const cur = queue.shift()!;
+      const links = await this.prisma.db.matterLink.findMany({ where: { kind: 'PREVIOUS_VERSION', OR: [{ fromId: cur }, { toId: cur }] }, select: { fromId: true, toId: true } });
+      for (const l of links) for (const x of [l.fromId, l.toId]) if (!seen.has(x)) { seen.add(x); queue.push(x); }
+    }
+    const rows = await this.prisma.db.matter.findMany({
+      where: { AND: [{ id: { in: [...seen] } }, this.policy.matterScope()] },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true, reference: true, title: true, status: true, createdAt: true, closedAt: true,
+        drafting: { select: { drafterId: true } },
+        documents: { where: { deletedAt: null }, select: { id: true, title: true, currentVersionNo: true, versions: { orderBy: { versionNo: 'desc' }, take: 1, select: { id: true, filename: true, stageLabel: true, createdAt: true } } } },
+      },
+    });
+    const users = await this.prisma.base.user.findMany({ where: { id: { in: rows.map((r) => r.drafting?.drafterId).filter((x): x is string => !!x) } }, select: { id: true, displayName: true } });
+    return rows.map((r, i) => ({
+      version: i + 1, id: r.id, reference: r.reference, title: r.title, status: r.status, createdAt: r.createdAt, closedAt: r.closedAt, current: r.id === id,
+      drafterName: users.find((u) => u.id === r.drafting?.drafterId)?.displayName ?? null,
+      documents: r.documents.map((doc) => ({ id: doc.id, title: doc.title, versions: doc.currentVersionNo, latest: doc.versions[0] ?? null })),
+    }));
+  }
+
+  // ------------------------------------------------------------------ external lawyers
+  async externals(id: string) {
+    await this.load(id);
+    const rows = await this.prisma.db.draftingExternal.findMany({ where: { matterId: id }, include: { firm: { select: { name: true } }, lawyer: { select: { name: true } } }, orderBy: { sentAt: 'desc' } });
+    const now = Date.now();
+    return rows.map((r) => ({ ...r, overdue: r.status === 'SENT' && !!r.dueAt && r.dueAt.getTime() < now }));
+  }
+
+  async addExternal(id: string, e: { firmId: string; lawyerId?: string | null; scope: string; sentAt: Date; dueAt?: Date | null; fee?: string | null; currency?: string; notes?: string | null }) {
+    const { m } = await this.load(id);
+    await this.policy.assertWrite(m);
+    const row = await this.prisma.tx(async (tx) => {
+      const r = await tx.draftingExternal.create({ data: { matterId: id, firmId: e.firmId, lawyerId: e.lawyerId ?? null, scope: e.scope, sentAt: e.sentAt, dueAt: e.dueAt ?? null, fee: e.fee ?? null, currency: e.currency ?? 'MVR', notes: e.notes ?? null, createdById: currentUser().id } });
+      if (e.dueAt) await this.calendar.upsert({ kind: 'DEADLINE', unit: 'DRF', title: `${m.reference}: due from external lawyer`, sourceType: 'DraftingExternal', sourceId: r.id, startsAt: e.dueAt, allDay: true, matterId: id, restricted: m.restricted }, tx);
+      await tx.matter.update({ where: { id }, data: { lastActivityAt: new Date() } });
+      return r;
+    });
+    await this.audit.log({ action: 'drf.external.sent', entityType: 'DraftingExternal', entityId: row.id, after: { ...e, fee: e.fee ? '[set]' : null }, meta: { matterId: id } });
+    return row;
+  }
+
+  async updateExternal(extId: string, e: { firmId?: string; lawyerId?: string | null; scope?: string; sentAt?: Date; dueAt?: Date | null; receivedAt?: Date | null; status?: 'SENT' | 'RECEIVED' | 'CANCELLED'; fee?: string | null; currency?: string; notes?: string | null }) {
+    const before = await this.prisma.db.draftingExternal.findUnique({ where: { id: extId } });
+    if (!before) throw notFound('External engagement');
+    const { m } = await this.load(before.matterId);
+    await this.policy.assertWrite(m);
+    const data = { ...e, ...(e.status === 'RECEIVED' && !e.receivedAt && !before.receivedAt ? { receivedAt: new Date() } : {}) };
+    await this.prisma.tx(async (tx) => {
+      const r = await tx.draftingExternal.update({ where: { id: extId }, data });
+      if (r.status !== 'SENT' || !r.dueAt) await this.calendar.cancel('DraftingExternal', extId, tx);
+      else await this.calendar.upsert({ kind: 'DEADLINE', unit: 'DRF', title: `${m.reference}: due from external lawyer`, sourceType: 'DraftingExternal', sourceId: extId, startsAt: r.dueAt, allDay: true, matterId: m.id, restricted: m.restricted }, tx);
+    });
+    const diff = changedFields(before as unknown as Record<string, unknown>, data);
+    if (diff) await this.audit.log({ action: 'drf.external.updated', entityType: 'DraftingExternal', entityId: extId, ...diff, meta: { matterId: before.matterId } });
+    return { ok: true };
   }
 
   // ------------------------------------------------------------------ guards (maker-checker)
@@ -116,8 +213,9 @@ export class DraftingService implements OnModuleInit {
     switch (action) {
       case 'register': return this.policy.covers('intake:triage', 'DRF', user) ? null : 'Only Legal staff can register requests';
       case 'assign': case 'cancel': case 'reject': return manage ? null : 'Only the Unit Head or HoD can do this';
+      // The HoD and Unit Head can take any of the drafter's steps on their behalf (recorded as such).
       case 'start': case 'request_info': case 'info_received': case 'submit_review':
-        return isDrafter || (manage && action !== 'submit_review') ? null : 'Only the assigned lawyer can do this';
+        return isDrafter || manage ? null : 'Only the assigned lawyer can do this';
       case 'return_correction': case 'mark_reviewed':
         if (isDrafter) return 'The person who drafted a document cannot review it (maker-checker)';
         return isReviewer || manage ? null : 'Only the reviewer can do this';
@@ -263,7 +361,8 @@ export class DraftingService implements OnModuleInit {
           await this.calendar.cancel('DraftingFollowUp', id, tx);
           break;
       }
-      await this.matters.recordTransition(tx, id, from, to, input.action, input.comment);
+      const onBehalf = DRAFTER_STEPS.includes(input.action) && !!drafterId && drafterId !== user.id;
+      await this.matters.recordTransition(tx, id, from, to, input.action, onBehalf ? `${input.comment ? `${input.comment} ` : ''}(on behalf of the drafter by ${user.isHod ? 'the HoD' : 'the Unit Head'} ${user.username})` : input.comment);
       if (input.action === 'send_for_approval' && hodReason) {
         await this.matters.recordTransition(tx, id, to, 'PENDING_HOD_APPROVAL', 'auto-route-hod', hodReason);
         to = 'PENDING_HOD_APPROVAL';

@@ -260,7 +260,10 @@ export class DocumentsService implements OnModuleInit {
     return { body, filename: v.filename, mime: v.detectedMime };
   }
 
-  async watermark(pdf: Buffer, text: string): Promise<Buffer> {
+  async watermark(pdf: Buffer, rawText: string): Promise<Buffer> {
+    // Standard PDF fonts only cover Latin-1: replace anything else (e.g. a name in Dhivehi) so the
+    // watermark never fails to draw.
+    const text = rawText.replace(/[^\x20-\x7E\u00A0-\u00FF]/g, '?');
     try {
       const doc = await PDFDocument.load(pdf, { ignoreEncryption: false });
       const font = await doc.embedFont(StandardFonts.Helvetica);

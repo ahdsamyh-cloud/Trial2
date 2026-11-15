@@ -17,10 +17,11 @@ export interface MatterDetail {
   assignments: { role: string; user: { id: string; displayName: string } }[];
   access?: { user: { id: string; displayName: string } }[];
   transitions: { id: string; at: string; fromStatus: string | null; toStatus: string; actorName: string; comment: string | null; action: string }[];
-  comments: { id: string; body: string | null; authorName: string; createdAt: string; internal: boolean }[];
+  comments: { id: string; body: string | null; authorName: string; createdAt: string; internal: boolean; versionId?: string | null }[];
   links: { id: string; reference: string; title: string; restricted: boolean }[];
   intakes: { id: string; intakeNo: string; subject: string; receivedAt: string }[];
   sla: { id: string; step: string; policy: string; dueAt: string; state: string; percent: number; stoppedAt: string | null }[];
+  canWrite: boolean;
 }
 
 /** Shared matter page: header, people, SLA, documents, comments, history. Units add their own panels. */
@@ -29,7 +30,7 @@ export function MatterView({ id, children, actions, docStages, docTypes, extraIn
   docStages?: string[]; docTypes?: { value: string; label: string }[]; extraInfo?: (m: MatterDetail) => [string, ReactNode][];
 }) {
   const { data: m, reload, error } = useApi<MatterDetail>(`/matters/${id}`);
-  const { can, me } = useAuth();
+  const { can } = useAuth();
   const dir = useDirectory();
   const [dlg, setDlg] = useState<'assign' | 'restrict' | 'edit' | 'status' | 'hold' | 'link' | null>(null);
   const [assign, setAssign] = useState({ assignee: '', reviewer: '' });
@@ -45,8 +46,8 @@ export function MatterView({ id, children, actions, docStages, docTypes, extraIn
   const assignees = m.assignments.filter((a) => a.role === 'ASSIGNEE');
   const reviewer = m.assignments.find((a) => a.role === 'REVIEWER');
   const canAssign = can('matter:assign', m.unit);
-  // Server enforces the finer rule (assigned officer / Unit Head / paralegal); this only hides controls.
-  const canWrite = !m.portalView && can('matter:write', m.unit) && (canAssign || !!me?.roles.some((r) => r.role === 'PARALEGAL' && r.unit === m.unit) || m.assignments.some((a) => a.user.id === me?.id));
+  // Computed by the server with the same rule it enforces (PolicyService.canWrite); this only hides controls.
+  const canWrite = m.canWrite;
   const generic = m.unit === 'CMP' || m.unit === 'AWR';
 
   return (
@@ -80,7 +81,8 @@ export function MatterView({ id, children, actions, docStages, docTypes, extraIn
           </Card>
           {children?.(m, reload)}
           <DocumentsPanel ownerType="matter" ownerId={m.id} canWrite={!m.portalView && canWrite} stages={docStages} docTypes={docTypes} />
-          <Comments matterId={m.id} comments={m.comments} onPosted={reload} portal={m.portalView} />
+          <Comments matterId={m.id} comments={m.comments} onPosted={reload} portal={m.portalView} byVersion={m.unit === 'DRF' && !m.portalView} />
+          {!m.portalView ? <ChangeHistory matterId={m.id} /> : null}
         </div>
         <div className="space-y-4">
           <SlaPanel sla={m.sla} />
@@ -148,5 +150,39 @@ export function WorkloadHint({ unit }: { unit: string }) {
       <ul className="grid grid-cols-2 gap-x-3">{data.rows.map((r) => <li key={r.userId}>{r.displayName}: {r.assignee}{r.overdue ? ` (${r.overdue} ${t('overdue')})` : ''}</li>)}</ul>
       {s ? <div className="mt-1 text-brand-700">{t('Suggestion: {name} has the lightest load.', { name: s.displayName })}</div> : null}
     </div>
+  );
+}
+
+interface HistoryRow { id: string; at: string; who: string; action: string; entityType: string | null; changes: { field: string; before: unknown; after: unknown }[] }
+
+const show = (v: unknown): string => {
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'string') return /^\d{4}-\d{2}-\d{2}T/.test(v) ? fmtDateTime(v) : v;
+  if (typeof v === 'object') return Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== '' && x !== null).map(([k, x]) => `${label(k)}: ${typeof x === 'object' ? JSON.stringify(x) : String(x)}`).join('; ') || '—';
+  return String(v);
+};
+
+/** Who changed what and when (from the audit log), with old and new values. Collapsed by default. */
+export function ChangeHistory({ matterId }: { matterId: string }) {
+  const [open, setOpen] = useState(false);
+  const { data, error } = useApi<HistoryRow[]>(open ? `/matters/${matterId}/history` : null, [open]);
+  return (
+    <Card title={t('Change history')} actions={<Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? t('Hide') : t('Show')}</Button>}>
+      {!open ? <p className="text-sm text-slate-600">{t('Every change to this matter is recorded with who made it, when, and the old and new value.')}</p>
+        : error ? <Alert>{error.message}</Alert> : !data ? <Spinner /> : !data.length ? <p className="text-sm text-slate-600">{t('No changes recorded yet.')}</p> : (
+          <ol className="space-y-3 text-sm" data-testid="change-history">
+            {data.map((r) => (
+              <li key={r.id} className="border-l-2 border-slate-200 pl-3">
+                <div className="text-xs text-slate-500">{fmtDateTime(r.at)} · {r.who} · {label(r.action.replace(/\./g, ' '))}{r.entityType && r.entityType !== 'Matter' ? ` (${label(r.entityType)})` : ''}</div>
+                {r.changes.length ? (
+                  <ul className="mt-1 space-y-0.5">
+                    {r.changes.map((c) => <li key={c.field}><span className="font-medium">{label(c.field)}</span>: <span className="text-slate-500 line-through">{show(c.before)}</span> → <span>{show(c.after)}</span></li>)}
+                  </ul>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        )}
+    </Card>
   );
 }

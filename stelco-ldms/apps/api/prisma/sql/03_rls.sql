@@ -22,7 +22,7 @@ DROP POLICY IF EXISTS matter_wall ON "Matter";
 CREATE POLICY matter_wall ON "Matter" USING (ldms_can_see_matter(id, restricted)) WITH CHECK (true);
 
 DO $$ DECLARE t text; BEGIN
-  FOREACH t IN ARRAY ARRAY['Document','Comment','LitigationCase','DraftingRequest','StatusTransition','MatterAssignment','SlaClock','Contract','LegalOpinion'] LOOP
+  FOREACH t IN ARRAY ARRAY['Document','Comment','LitigationCase','DraftingRequest','StatusTransition','MatterAssignment','SlaClock','Contract','LegalOpinion','DraftingExternal'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
     EXECUTE format('DROP POLICY IF EXISTS wall ON %I', t);

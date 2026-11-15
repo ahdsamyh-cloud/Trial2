@@ -174,6 +174,9 @@ try {
     console.log('  seeding reference data and demo users (first start only)...');
     await run('Seeding', join(apiDir, 'dist-tools', 'prisma', 'seed.js'), [], { cwd: apiDir, env: childEnv });
     await db.query("INSERT INTO _ldms_local_state (key) VALUES ('seed')");
+  } else {
+    // Reference data only (idempotent upserts): picks up new document/request types after an upgrade.
+    await run('Updating reference data', join(apiDir, 'dist-tools', 'prisma', 'seed.js'), [], { cwd: apiDir, env: { ...childEnv, SEED_DEMO: 'false' } });
   }
 
   // ------------------------------------------------------------ 4. restricted role (RLS applies)

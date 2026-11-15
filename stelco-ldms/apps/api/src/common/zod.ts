@@ -22,6 +22,21 @@ export function qrec<K extends string>(q: unknown, keys: readonly K[]): Partial<
   return out;
 }
 
+/**
+ * Schema for PATCH/updates: every field optional and WITHOUT its default. zod applies `.default()`
+ * even inside `.partial()`, so a plain `create.partial()` silently resets defaulted fields (currency,
+ * priority, `active`, ...) on every edit that does not mention them.
+ */
+export function updatable<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
+  const shape: Record<string, ZodTypeAny> = {};
+  for (const [k, v] of Object.entries(schema.shape)) {
+    let f = v as ZodTypeAny;
+    while (f instanceof z.ZodDefault) f = f.unwrap() as ZodTypeAny;
+    shape[k] = f.optional();
+  }
+  return z.object(shape).strict();
+}
+
 /** Parse untrusted input with a strict schema (unknown keys rejected → no mass assignment). */
 export function parse<T extends ZodTypeAny>(schema: T, input: unknown): z.infer<T> {
   return schema.parse(input);
