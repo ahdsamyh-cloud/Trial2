@@ -159,7 +159,7 @@ export function UserSelect({ unit, value, onChange, labelText, exclude, id: forc
 export function Timeline({ items }: { items: { id: string; at: string; fromStatus: string | null; toStatus: string; actorName: string; comment: string | null; action: string }[] }) {
   return (
     <Card title={t('History')}>
-      <ol className="relative space-y-3 border-l border-slate-200 pl-4">
+      <ol className="relative space-y-3 border-s border-slate-200 ps-4">
         {items.map((s) => (
           <li key={s.id} className="text-sm">
             <span className="absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full border-2 border-white bg-brand-500" aria-hidden />

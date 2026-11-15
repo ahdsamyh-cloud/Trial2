@@ -45,14 +45,14 @@ export default function CalendarPage() {
         <Select aria-label={t('Unit')} className="w-36" placeholder={t('All units')} value={f.unit} onChange={(e) => setF({ ...f, unit: e.target.value })} options={UNITS.map((u) => ({ value: u, label: UNIT_NAMES[u] }))} />
         <Select aria-label={t('Type')} className="w-44" placeholder={t('All types')} value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })} options={KINDS.map((k) => ({ value: k, label: label(k) }))} />
         <label className="flex items-center gap-1 text-sm"><input type="checkbox" checked={!!f.mine} onChange={(e) => setF({ ...f, mine: e.target.checked ? '1' : '' })} />{t('Only mine')}</label>
-        <div className="ml-auto flex gap-1"><Button size="sm" variant={view === 'month' ? 'primary' : 'secondary'} onClick={() => setView('month')}>{t('Month')}</Button><Button size="sm" variant={view === 'list' ? 'primary' : 'secondary'} onClick={() => setView('list')}>{t('List')}</Button></div>
+        <div className="ms-auto flex gap-1"><Button size="sm" variant={view === 'month' ? 'primary' : 'secondary'} onClick={() => setView('month')}>{t('Month')}</Button><Button size="sm" variant={view === 'list' ? 'primary' : 'secondary'} onClick={() => setView('list')}>{t('List')}</Button></div>
       </div>
       {view === 'month' ? (
         <div className="hidden overflow-hidden rounded-lg border bg-white md:block">
           <div className="grid grid-cols-7 border-b bg-slate-50 text-center text-xs font-semibold text-slate-600">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className={`py-1.5 ${d === 'Fri' || d === 'Sat' ? 'text-slate-500' : ''}`}>{t(d)}</div>)}</div>
           <div className="grid grid-cols-7">{days.map((d, i) => (
-            <div key={i} className={`min-h-[96px] border-b border-r p-1 ${d && localDay(new Date()) === d ? 'bg-brand-50' : ''} ${i % 7 >= 5 ? 'bg-slate-50' : ''}`}>
-              {d ? <><div className="text-right text-xs text-slate-600">{Number(d.slice(8))}</div>
+            <div key={i} className={`min-h-[96px] border-b border-e p-1 ${d && localDay(new Date()) === d ? 'bg-brand-50' : ''} ${i % 7 >= 5 ? 'bg-slate-50' : ''}`}>
+              {d ? <><div className="text-end text-xs text-slate-600">{Number(d.slice(8))}</div>
                 <ul className="space-y-0.5">{byDay(d).slice(0, 4).map((e) => <li key={e.id}><Link href={link(e)} className="block truncate rounded px-1 text-[11px] hover:underline" title={e.title}><Badge tone={TONE[e.kind] ?? 'gray'}>{label(e.kind).slice(0, 10)}</Badge> {e.title}</Link></li>)}
                   {byDay(d).length > 4 ? <li className="text-[11px] text-slate-500">+{byDay(d).length - 4} {t('more')}</li> : null}</ul></> : null}
             </div>

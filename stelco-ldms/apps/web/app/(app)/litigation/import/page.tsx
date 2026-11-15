@@ -79,7 +79,7 @@ export default function ImportWizard() {
           <div className="mt-3 flex gap-2">{['', 'CREATE', 'DUPLICATE', 'ERROR'].map((a) => <Button key={a} size="sm" variant={filter === a ? 'primary' : 'secondary'} onClick={() => setFilter(a)}>{a ? label(a) : t('All')}</Button>)}</div>
           <div className="mt-2 max-h-[50vh] overflow-auto">
             <table className="min-w-full text-sm">
-              <thead><tr className="text-left text-xs uppercase text-slate-500"><th className="px-2 py-1">{t('Row')}</th><th className="px-2">{t('Case no.')}</th><th className="px-2">{t('Court')}</th><th className="px-2">{t('Result')}</th><th className="px-2">{t('Details')}</th></tr></thead>
+              <thead><tr className="text-start text-xs uppercase text-slate-500"><th className="px-2 py-1">{t('Row')}</th><th className="px-2">{t('Case no.')}</th><th className="px-2">{t('Court')}</th><th className="px-2">{t('Result')}</th><th className="px-2">{t('Details')}</th></tr></thead>
               <tbody className="divide-y">{prev.rows.filter((r) => !filter || r.action === filter).map((r) => (
                 <tr key={r.rowNo}><td className="px-2 py-1">{r.rowNo}</td><td className="px-2">{r.caseNo || '—'}</td><td className="px-2">{r.court}</td><td className="px-2"><Badge tone={r.action === 'CREATE' ? 'green' : r.action === 'ERROR' ? 'red' : 'amber'}>{label(r.action)}</Badge></td>
                   <td className="px-2 text-xs">{[...r.errors.map((e) => `✖ ${e}`), ...r.warnings.map((w) => `⚠ ${w}`)].join(' · ')}</td></tr>

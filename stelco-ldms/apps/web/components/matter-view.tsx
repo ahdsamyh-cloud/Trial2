@@ -172,7 +172,7 @@ export function ChangeHistory({ matterId }: { matterId: string }) {
         : error ? <Alert>{error.message}</Alert> : !data ? <Spinner /> : !data.length ? <p className="text-sm text-slate-600">{t('No changes recorded yet.')}</p> : (
           <ol className="space-y-3 text-sm" data-testid="change-history">
             {data.map((r) => (
-              <li key={r.id} className="border-l-2 border-slate-200 pl-3">
+              <li key={r.id} className="border-l-2 border-slate-200 ps-3">
                 <div className="text-xs text-slate-500">{fmtDateTime(r.at)} · {r.who} · {label(r.action.replace(/\./g, ' '))}{r.entityType && r.entityType !== 'Matter' ? ` (${label(r.entityType)})` : ''}</div>
                 {r.changes.length ? (
                   <ul className="mt-1 space-y-0.5">

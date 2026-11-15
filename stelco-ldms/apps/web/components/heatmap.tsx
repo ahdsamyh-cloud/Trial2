@@ -10,9 +10,9 @@ export function HeatMap({ cells }: { cells: { departmentId: string; department: 
   return (
     <div className="overflow-x-auto">
       <table className="text-xs">
-        <thead><tr><th className="px-2 py-1 text-left">{t('Department')}</th>{laws.map(([id, name]) => <th key={id} scope="col" className="max-w-[10rem] px-2 py-1 text-left font-medium">{name}</th>)}</tr></thead>
+        <thead><tr><th className="px-2 py-1 text-start">{t('Department')}</th>{laws.map(([id, name]) => <th key={id} scope="col" className="max-w-[10rem] px-2 py-1 text-start font-medium">{name}</th>)}</tr></thead>
         <tbody>{depts.map(([did, dname]) => (
-          <tr key={did}><th scope="row" className="px-2 py-1 text-left font-medium">{dname}</th>
+          <tr key={did}><th scope="row" className="px-2 py-1 text-start font-medium">{dname}</th>
             {laws.map(([lid]) => { const c = cells.find((x) => x.departmentId === did && x.lawId === lid); return <td key={lid} className={`px-2 py-1 text-center font-semibold ${tone(c?.score ?? null)}`}>{c?.score === undefined || c?.score === null ? '—' : `${c.score}%`}</td>; })}
           </tr>
         ))}</tbody>

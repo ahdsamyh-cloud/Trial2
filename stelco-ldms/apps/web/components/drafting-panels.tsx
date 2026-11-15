@@ -36,7 +36,7 @@ export function DraftingPanel({ m, reloadMatter }: { m: MatterDetail; reloadMatt
   const externals = useApi<ExternalRow[]>(`/drafting/requests/${m.id}/externals`);
   const firms = useApi<{ id: string; name: string }[]>('/config/law-firms');
   const lawyers = useApi<{ id: string; name: string; firmId: string }[]>('/config/external-lawyers');
-  const [dlg, setDlg] = useState<'newVersion' | 'external' | 'editExternal' | 'details' | null>(null);
+  const [dlg, setDlg] = useState<'newVersion' | 'external' | 'editExternal' | 'details' | 'template' | null>(null);
   const [ef, setEf] = useState<Record<string, string>>({});
   const [selExt, setSelExt] = useState('');
   const setE = (k: string) => (e: { target: { value: string } }) => setEf((f) => ({ ...f, [k]: e.target.value }));
@@ -69,7 +69,8 @@ export function DraftingPanel({ m, reloadMatter }: { m: MatterDetail; reloadMatt
         <div className="flex flex-wrap gap-2">
           {d.actions.length ? d.actions.map((a) => <Button key={a.action} variant={DANGER.includes(a.action) ? 'secondary' : 'primary'} size="sm" busy={act.busy} onClick={() => run(a)}>{t(a.label)}</Button>) : <p className="text-sm text-slate-500">{t('No action for you at this stage.')}</p>}
         </div>
-        {canWrite ? <div className="mt-3"><Button size="sm" variant="ghost" onClick={() => { setEf({ counterparty: d.counterparty ?? '', contractValue: d.contractValue ?? '', currency: d.currency }); setDlg('details'); }}>{t('Edit details')}</Button></div> : null}
+        {canWrite ? <div className="mt-3 flex flex-wrap gap-1"><Button size="sm" variant="ghost" onClick={() => { setEf({ counterparty: d.counterparty ?? '', contractValue: d.contractValue ?? '', currency: d.currency }); setDlg('details'); }}>{t('Edit details')}</Button>
+          <Button size="sm" variant="ghost" onClick={() => { setEf({ templateId: '' }); setDlg('template'); }}>{t('Start from a template')}</Button></div> : null}
         <div className="mt-4"><DL items={[
           [t('Drafter (maker)'), d.drafterName ?? '—'], [t('Reviewer (checker)'), d.reviewerName ?? '—'], [t('Approval by'), d.approvalLevel === 'HOD' ? t('HoD') : t('Unit Head')],
           [t('Why HoD'), d.escalationReason ?? '—'], [t('Counterparty'), d.counterparty ?? '—'], [t('Contract value'), fmtMoney(d.contractValue, d.currency)], [t('Follow-up date'), fmtDate(d.followUpDate)],
@@ -147,6 +148,7 @@ export function DraftingPanel({ m, reloadMatter }: { m: MatterDetail; reloadMatt
         </div>
         <Field label={t('Notes')}>{(id) => <Textarea id={id} value={ef.notes ?? ''} onChange={setE('notes')} />}</Field>
       </Modal>
+      <TemplatePicker open={dlg === 'template'} matterId={m.id} onClose={() => setDlg(null)} />
       <Modal open={dlg === 'details'} title={t('Edit request details')} onClose={() => setDlg(null)} footer={<Button busy={act.busy} onClick={() => act.run(async () => { await api.patch(`/drafting/requests/${m.id}`, { counterparty: ef.counterparty || null, contractValue: ef.contractValue || null, currency: ef.currency || 'MVR' }); setDlg(null); await reload(); })}>{t('Save')}</Button>}>
         {act.error ? <Alert>{act.error}</Alert> : null}
         <Field label={t('Counterparty')}>{(id) => <Input id={id} value={ef.counterparty ?? ''} onChange={setE('counterparty')} />}</Field>
@@ -165,5 +167,24 @@ export function DraftingPanel({ m, reloadMatter }: { m: MatterDetail; reloadMatt
         <Field label={pending?.requiresComment ? t('Reason / comments') : t('Comment (optional)')} required={pending?.requiresComment}>{(id) => <Textarea id={id} value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} />}</Field>
       </Modal>
     </>
+  );
+}
+
+/** Copies an approved template's file(s) into this request's documents (they are virus-scanned again). */
+function TemplatePicker({ open, matterId, onClose }: { open: boolean; matterId: string; onClose: () => void }) {
+  const { data } = useApi<{ id: string; name: string; kind: string; category: string; status: string; version: number; guidance: string | null; documents: { id: string }[] }[]>(open ? '/drafting/templates' : null, [open]);
+  const [sel, setSel] = useState('');
+  const act = useAction();
+  const approved = (data ?? []).filter((x) => x.status === 'APPROVED');
+  const chosen = approved.find((x) => x.id === sel);
+  return (
+    <Modal open={open} title={t('Start from a template')} onClose={onClose} footer={<Button busy={act.busy} disabled={!sel} onClick={() => act.run(async () => { await api.post(`/drafting/requests/${matterId}/from-template`, { templateId: sel }); onClose(); location.reload(); })}>{t('Copy into this request')}</Button>}>
+      {act.error ? <Alert>{act.error}</Alert> : null}
+      {!approved.length ? <Empty>{t('No approved templates yet. Add them under Drafting → Templates & clauses.')}</Empty> : <>
+        <Field label={t('Approved template')}>{(id) => <Select id={id} placeholder={t('— Select —')} value={sel} onChange={(e) => setSel(e.target.value)} options={approved.map((x) => ({ value: x.id, label: `${x.name} · ${label(x.kind)} · v${x.version}${x.documents.length ? '' : ` (${t('no file')})`}` }))} />}</Field>
+        {chosen?.guidance ? <p className="text-sm text-slate-600">{t('When to use')}: {chosen.guidance}</p> : null}
+        <p className="text-xs text-slate-500">{t('The template file is copied into Documents as a new document marked "Template". Edit it there and upload your drafts as new versions.')}</p>
+      </>}
+    </Modal>
   );
 }

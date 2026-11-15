@@ -1,3 +1,4 @@
+import { t } from './i18n';
 const TZ = 'Indian/Maldives';
 export function fmtDate(d?: string | Date | null) {
   if (!d) return '—';
@@ -13,7 +14,8 @@ export function fmtMoney(v?: string | number | null, cur = 'MVR') {
 }
 export function label(s?: string | null) {
   if (!s) return '—';
-  return s.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+  // Status / type codes (IN_DRAFTING -> "In drafting"), translated when a Dhivehi wording exists for it.
+  return t(s.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase()));
 }
 export function toLocalInput(d?: string | Date | null) {
   if (!d) return '';

@@ -83,6 +83,61 @@ export class DashboardService {
     };
   }
 
+  /**
+   * Workload per lawyer (HoD: everyone; Unit Head: their unit's staff). Counts only matters the caller can see.
+   * open = assigned open matters (as assignee), reviewing = open matters waiting on them as reviewer/approver,
+   * hearings7d = their hearings in the next 7 days, overdue = open deadlines past due, breaches = SLA clocks breached,
+   * research = open law-research tasks, closed30d = matters they closed in the last 30 days.
+   */
+  async workload(unit?: Unit) {
+    const user = currentUser();
+    if (!user.perms.has('dashboard:hod') && !user.perms.has('dashboard:unit')) throw forbidden();
+    let units: Unit[] | 'ALL' = 'ALL';
+    if (!user.perms.has('dashboard:hod')) units = user.perms.get('dashboard:unit')!.units as Unit[];
+    if (unit) { if (units !== 'ALL' && !units.includes(unit)) throw forbidden(); units = [unit]; }
+    const staffRoles = await this.prisma.base.userRole.findMany({
+      where: { role: { in: ['UNIT_HEAD', 'LEGAL_OFFICER', 'PARALEGAL', ...(units === 'ALL' ? (['HOD'] as const) : [])] }, user: { status: 'ACTIVE' }, ...(units === 'ALL' ? {} : { OR: [{ unit: { in: units } }, { unit: null, role: 'HOD' }] }) },
+      select: { userId: true, role: true, unit: true, user: { select: { displayName: true, username: true } } },
+    });
+    const people = new Map<string, { userId: string; name: string; username: string; roles: string[] }>();
+    for (const r of staffRoles) {
+      const p = people.get(r.userId) ?? { userId: r.userId, name: r.user.displayName, username: r.user.username, roles: [] };
+      p.roles.push(r.role === 'HOD' ? 'HoD' : `${r.role === 'UNIT_HEAD' ? 'Unit Head' : r.role === 'LEGAL_OFFICER' ? 'Legal Officer' : 'Paralegal'}${r.unit ? ` (${r.unit})` : ''}`);
+      people.set(r.userId, p);
+    }
+    const ids = [...people.keys()];
+    const scope = this.policy.matterScope();
+    const unitWhere: Prisma.MatterWhereInput = units === 'ALL' ? {} : { unit: { in: units } };
+    const open: Prisma.MatterWhereInput = { AND: [scope, unitWhere, { closedAt: null }] };
+    const now = new Date();
+    const week = new Date(now.getTime() + 7 * 86400_000);
+    const [assigned, reviewing, hearings, overdue, breaches, research, closed] = await Promise.all([
+      this.prisma.db.matterAssignment.groupBy({ by: ['userId'], where: { userId: { in: ids }, role: 'ASSIGNEE', matter: open }, _count: true }),
+      this.prisma.db.matterAssignment.groupBy({ by: ['userId'], where: { userId: { in: ids }, role: { in: ['REVIEWER', 'APPROVER'] }, matter: open }, _count: true }),
+      this.prisma.db.hearing.findMany({ where: { status: 'SCHEDULED', startsAt: { gte: now, lt: week }, case: { matter: open } }, select: { case: { select: { responsibleOfficerId: true, matter: { select: { assignments: { where: { role: 'ASSIGNEE' }, select: { userId: true } } } } } } } }),
+      this.prisma.db.caseDeadline.groupBy({ by: ['ownerId'], where: { ownerId: { in: ids }, status: 'OPEN', dueAt: { lt: now }, case: { matter: open } }, _count: true }),
+      this.prisma.db.slaClock.findMany({ where: { breachedAt: { not: null }, stoppedAt: null, matter: open }, select: { matter: { select: { assignments: { where: { role: 'ASSIGNEE' }, select: { userId: true } } } } } }),
+      units === 'ALL' || units.includes('CMP') ? this.prisma.db.law.groupBy({ by: ['researchAssigneeId'], where: { researchAssigneeId: { in: ids }, researchStatus: { in: ['ASSIGNED', 'IN_PROGRESS'] } }, _count: true }) : Promise.resolve([]),
+      this.prisma.db.matterAssignment.groupBy({ by: ['userId'], where: { userId: { in: ids }, role: 'ASSIGNEE', matter: { AND: [scope, unitWhere, { closedAt: { gte: new Date(now.getTime() - 30 * 86400_000) } }] } }, _count: true }),
+    ]);
+    const count = (rows: { _count: number }[], key: (r: never) => string | null, id: string) => (rows as never[]).filter((r) => key(r) === id).reduce((n, r) => n + (r as { _count: number })._count, 0);
+    const rows = ids.map((id) => {
+      const p = people.get(id)!;
+      const h = hearings.filter((x) => x.case.responsibleOfficerId === id || x.case.matter.assignments.some((a) => a.userId === id)).length;
+      const b = breaches.filter((x) => x.matter?.assignments.some((a) => a.userId === id)).length;
+      const r = {
+        ...p,
+        open: count(assigned, (x: { userId: string }) => x.userId, id), reviewing: count(reviewing, (x: { userId: string }) => x.userId, id),
+        hearings7d: h, overdue: count(overdue, (x: { ownerId: string | null }) => x.ownerId, id), breaches: b,
+        research: count(research as { _count: number }[], (x: { researchAssigneeId: string | null }) => x.researchAssigneeId, id),
+        closed30d: count(closed, (x: { userId: string }) => x.userId, id),
+      };
+      return { ...r, load: r.open + r.reviewing + r.hearings7d + r.research + 2 * (r.overdue + r.breaches) };
+    }).sort((a, b) => b.load - a.load);
+    await this.audit.log({ action: 'dashboard.workload', meta: { unit: unit ?? null } });
+    return { units, people: rows };
+  }
+
   private async complianceHeat() {
     const items = await this.prisma.db.checkItem.findMany({ where: { rating: { not: null } }, select: { rating: true, cycle: { select: { departmentId: true } }, obligation: { select: { law: { select: { id: true, title: true } } } } } });
     const depts = await this.prisma.base.department.findMany({ select: { id: true, name: true } });

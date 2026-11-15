@@ -23,6 +23,12 @@ const caseSchema = z.object({
 }).strict();
 const fieldMap = z.partialRecord(z.enum(Object.keys(LIT_FIELDS) as [string, ...string[]]), z.string().max(200)).transform((v) => Object.fromEntries(Object.entries(v).filter(([, c]) => c)));
 
+/** Judgment follow-up: appeal period (days from appealFrom, default the decision date) and comply-by date. */
+const appealFields = {
+  appealDays: z.number().int().min(1).max(365).nullish(), appealDayKind: z.enum(['CALENDAR', 'BUSINESS']).nullish(), appealFrom: z.coerce.date().nullish(),
+  appealDecision: z.enum(['UNDECIDED', 'APPEAL', 'NO_APPEAL']).nullish(), complyBy: z.coerce.date().nullish(),
+};
+
 @Controller('litigation')
 export class LitigationController {
   constructor(private readonly lit: LitigationService, private readonly importer: LitigationImportService, private readonly exporter: ExportService) {}
@@ -193,7 +199,7 @@ export class LitigationController {
   @Post('cases/:id/outcomes')
   @Can('lit:write')
   outcome(@Param('id') caseId: string, @Body() body: unknown) {
-    return this.lit.addOutcome(caseId, parse(z.object({ kind: z.enum(['SETTLEMENT', 'JUDGMENT']), decidedOn: z.coerce.date(), amount: money.nullish(), currency: z.string().length(3).optional(), direction: z.enum(['PAYABLE', 'RECEIVABLE', 'NONE']), paymentStatus: z.enum(['PENDING', 'PARTIAL', 'PAID', 'NA']).optional(), terms: z.string().max(10000).nullish() }).strict(), body));
+    return this.lit.addOutcome(caseId, parse(z.object({ kind: z.enum(['SETTLEMENT', 'JUDGMENT']), decidedOn: z.coerce.date(), amount: money.nullish(), currency: z.string().length(3).optional(), direction: z.enum(['PAYABLE', 'RECEIVABLE', 'NONE']), paymentStatus: z.enum(['PENDING', 'PARTIAL', 'PAID', 'NA']).optional(), terms: z.string().max(10000).nullish(), ...appealFields }).strict(), body));
   }
 
   @Patch('outcomes/:id')
@@ -202,6 +208,7 @@ export class LitigationController {
     return this.lit.updateOutcome(oid, parse(z.object({
       paymentStatus: z.enum(['PENDING', 'PARTIAL', 'PAID', 'NA']).optional(), amount: money.nullish(), kind: z.enum(['SETTLEMENT', 'JUDGMENT']).optional(),
       decidedOn: z.coerce.date().optional(), currency: z.string().length(3).optional(), direction: z.enum(['PAYABLE', 'RECEIVABLE', 'NONE']).optional(), terms: z.string().max(10000).nullish(),
+      ...appealFields,
     }).strict(), body));
   }
 

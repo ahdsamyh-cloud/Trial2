@@ -52,7 +52,7 @@ export function DataTable<T extends { id: string }>({
                 {selectable ? (
                   <th className="w-8 px-3 py-2"><input type="checkbox" aria-label={t('Select all')} checked={allOnPage} onChange={(e) => onSelect?.(e.target.checked ? [...new Set([...sel, ...rows.map((r) => r.id)])] : sel.filter((s) => !rows.some((r) => r.id === s)))} /></th>
                 ) : null}
-                {visible.map((c) => <th key={c.key} scope="col" className={`px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600 ${c.hideOnMobile ? 'hidden md:table-cell' : ''}`}>{c.header}</th>)}
+                {visible.map((c) => <th key={c.key} scope="col" className={`px-3 py-2 text-start text-xs font-semibold uppercase tracking-wide text-slate-600 ${c.hideOnMobile ? 'hidden md:table-cell' : ''}`}>{c.header}</th>)}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">

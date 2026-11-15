@@ -149,7 +149,7 @@ export function Modal({ open, title, onClose, children, footer, wide }: { open: 
       <div ref={ref} role="dialog" aria-modal="true" aria-label={title} className={clsx('max-h-[92vh] w-full overflow-y-auto rounded-t-xl bg-white shadow-xl sm:rounded-xl', wide ? 'sm:max-w-3xl' : 'sm:max-w-lg')}>
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h2 className="text-base font-semibold">{title}</h2>
-          <span className="ml-auto mr-1"><ThaanaToggle compact /></span>
+          <span className="ms-auto me-1"><ThaanaToggle compact /></span>
           <button onClick={onClose} className="rounded p-1 text-slate-500 hover:bg-slate-100" aria-label={t('Close')}>✕</button>
         </div>
         <div className="space-y-3 p-4">{children}</div>
@@ -165,7 +165,7 @@ export function Tabs({ tabs, active, onChange }: { tabs: { id: string; label: st
       {tabs.map((tb) => (
         <button key={tb.id} role="tab" aria-selected={active === tb.id} onClick={() => onChange(tb.id)}
           className={clsx('whitespace-nowrap border-b-2 px-3 py-2 text-sm', active === tb.id ? 'border-brand-600 font-semibold text-brand-700' : 'border-transparent text-slate-600 hover:text-slate-900')}>
-          {tb.label}{tb.count !== undefined ? <span className="ml-1 text-xs text-slate-500">({tb.count})</span> : null}
+          {tb.label}{tb.count !== undefined ? <span className="ms-1 text-xs text-slate-500">({tb.count})</span> : null}
         </button>
       ))}
     </div>

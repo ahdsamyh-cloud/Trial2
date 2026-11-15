@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Prisma, Unit } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import PizZip from 'pizzip';
@@ -10,6 +10,8 @@ import { PrismaService } from '../../common/prisma.service';
 import { AuditService, changedFields } from '../audit/audit.service';
 import { DocumentsService } from '../documents/documents.service';
 import { StorageService } from '../documents/storage.service';
+import { JobsService } from '../jobs/jobs.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PolicyService } from '../policy/policy.service';
 
 /**
@@ -65,15 +67,61 @@ const FIELDS: { group: string; key: string; label: string; list?: string[] }[] =
   { group: 'Awareness', key: 'awr.sessions', label: 'Sessions (list)', list: ['date', 'title', 'topic', 'format', 'status', 'attendance', 'rating'] },
 ];
 
+export interface AutoSendInput { autoSend?: boolean; recipientIds?: string[] }
+
 @Injectable()
-export class ReportTemplatesService {
+export class ReportTemplatesService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly policy: PolicyService,
     private readonly audit: AuditService,
     private readonly documents: DocumentsService,
     private readonly storage: StorageService,
+    private readonly jobs: JobsService,
+    private readonly notifications: NotificationsService,
   ) {}
+
+  onModuleInit() {
+    this.jobs.register('reports.auto', () => this.autoSend());
+  }
+
+  /**
+   * Daily 08:00 job. Sunday: WEEKLY formats with auto-send for the week that just ended (Sun–Sat).
+   * 1st of the month: MONTHLY formats for the month that just ended. Recipients get a notification + email
+   * with a link; the file is generated when they open it, under THEIR OWN access (nothing confidential is
+   * put into an email, and someone who has lost access gets nothing).
+   */
+  async autoSend(now = new Date()) {
+    const local = new Date(now.getTime() + MVT);
+    const due: { period: 'WEEKLY' | 'MONTHLY'; ref: string }[] = [];
+    if (local.getUTCDay() === 0) due.push({ period: 'WEEKLY', ref: new Date(local.getTime() - 86400_000).toISOString().slice(0, 10) });
+    if (local.getUTCDate() === 1) due.push({ period: 'MONTHLY', ref: new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth() - 1, 1)).toISOString().slice(0, 7) });
+    let sent = 0;
+    for (const d of due) {
+      const tpls = await this.prisma.base.reportTemplate.findMany({ where: { active: true, autoSend: true, period: d.period } });
+      for (const tpl of tpls) {
+        if (tpl.lastSentRef === `${d.period}:${d.ref}` || !tpl.recipientIds.length) continue;
+        const { label } = this.range(d.period, d.ref);
+        await this.prisma.base.reportTemplate.update({ where: { id: tpl.id }, data: { lastSentRef: `${d.period}:${d.ref}` } });
+        const link = `/reports?run=${encodeURIComponent(tpl.id)}&period=${d.period}&ref=${encodeURIComponent(d.ref)}`;
+        await this.notifications.notify(tpl.recipientIds, {
+          type: 'report.auto', title: `${d.period === 'WEEKLY' ? 'Weekly' : 'Monthly'} report ready: ${tpl.name} (${label})`,
+          body: 'Open the link to download the report filled with the latest data. It is generated when you open it, using your own access.', link,
+        });
+        await this.audit.log({ action: 'report.auto-sent', entityType: 'ReportTemplate', entityId: tpl.id, meta: { period: d.period, ref: d.ref, recipients: tpl.recipientIds.length } });
+        sent++;
+      }
+    }
+    return { sent };
+  }
+
+  /** Recipients must be active staff of the Legal Department or management (they also need report access when they open it). */
+  private async checkRecipients(ids: string[] | undefined) {
+    if (!ids?.length) return;
+    const rows = await this.prisma.base.userRole.findMany({ where: { userId: { in: ids }, role: { in: ['HOD', 'UNIT_HEAD', 'LEGAL_OFFICER', 'PARALEGAL', 'MGMT_VIEWER'] }, user: { status: 'ACTIVE' } }, select: { userId: true } });
+    const ok = new Set(rows.map((r) => r.userId));
+    if (ids.some((i) => !ok.has(i))) throw badRequest('Recipients must be active Legal Department staff or management');
+  }
 
   fields() {
     return FIELDS;
@@ -340,21 +388,26 @@ export class ReportTemplatesService {
     return rows.map((r) => ({ ...r, file: docs.find((d) => d.documentId === r.documentId) ?? null }));
   }
 
-  async create(input: { name: string; unit: Unit | null; period: 'WEEKLY' | 'MONTHLY' | 'ANY' }, file: { originalname: string; buffer: Buffer }) {
+  async create(input: { name: string; unit: Unit | null; period: 'WEEKLY' | 'MONTHLY' | 'ANY' } & AutoSendInput, file: { originalname: string; buffer: Buffer }) {
     this.assertManage();
+    await this.checkRecipients(input.recipientIds);
+    if (input.autoSend && input.period === 'ANY') throw badRequest('Automatic sending needs a weekly or monthly format');
     const ext = file.originalname.toLowerCase().split('.').pop();
     if (ext !== 'xlsx' && ext !== 'docx') throw badRequest('Upload the report format as an Excel (.xlsx) or Word (.docx) file');
     const up = await this.documents.upload({ ownerType: 'library', libraryKind: 'REPORT_TEMPLATE', title: `Report format: ${input.name}`, file });
-    const row = await this.prisma.base.reportTemplate.create({ data: { name: input.name, unit: input.unit, period: input.period, format: ext === 'xlsx' ? 'XLSX' : 'DOCX', documentId: up.documentId, createdById: currentUser().id } });
+    const row = await this.prisma.base.reportTemplate.create({ data: { name: input.name, unit: input.unit, period: input.period, autoSend: input.autoSend ?? false, recipientIds: [...new Set(input.recipientIds ?? [])], format: ext === 'xlsx' ? 'XLSX' : 'DOCX', documentId: up.documentId, createdById: currentUser().id } });
     await this.audit.log({ action: 'report.template.created', entityType: 'ReportTemplate', entityId: row.id, after: { name: row.name, unit: row.unit, period: row.period, format: row.format } });
     return row;
   }
 
   /** Replace the file of a format (new version) and/or change its name, unit, period or active flag. */
-  async update(id: string, input: { name?: string; unit?: Unit | null; period?: 'WEEKLY' | 'MONTHLY' | 'ANY'; active?: boolean }, file?: { originalname: string; buffer: Buffer }) {
+  async update(id: string, input: { name?: string; unit?: Unit | null; period?: 'WEEKLY' | 'MONTHLY' | 'ANY'; active?: boolean } & AutoSendInput, file?: { originalname: string; buffer: Buffer }) {
     this.assertManage();
     const before = await this.prisma.base.reportTemplate.findUnique({ where: { id } });
     if (!before) throw notFound('Report format');
+    await this.checkRecipients(input.recipientIds);
+    if (input.recipientIds) input.recipientIds = [...new Set(input.recipientIds)];
+    if ((input.autoSend ?? before.autoSend) && (input.period ?? before.period) === 'ANY') throw badRequest('Automatic sending needs a weekly or monthly format');
     let format = before.format;
     if (file) {
       const ext = file.originalname.toLowerCase().split('.').pop();

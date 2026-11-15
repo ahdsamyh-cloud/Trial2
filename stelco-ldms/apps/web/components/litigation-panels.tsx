@@ -25,7 +25,8 @@ interface CaseDetail {
   engagements: { id: string; firm: { name: string }; feeArrangement: string | null; budget: string | null; currency: string; actual: number; budgetUsedPct: number | null; invoices: { id: string; invoiceNo: string; amount: string; currency: string; receivedOn: string; status: string; notes: string | null }[] }[];
   updates: { id: string; receivedAt: string; channel: string; summary: string }[];
   evaluation: { quality: number; responsiveness: number; cost: number; outcome: number; comments: string | null } | null;
-  outcomes: { id: string; kind: string; decidedOn: string; amount: string | null; currency: string; direction: string; paymentStatus: string; terms: string | null; enforcement: { id: string; on: string; action: string; status: string }[] }[];
+  outcomes: { id: string; kind: string; decidedOn: string; amount: string | null; currency: string; direction: string; paymentStatus: string; terms: string | null;
+    appealDays: number | null; appealDayKind: string | null; appealFrom: string | null; appealDecision: string | null; appealDeadlineId: string | null; complyBy: string | null; complyDeadlineId: string | null; enforcement: { id: string; on: string; action: string; status: string }[] }[];
   allowedStatuses: Record<string, string[]>;
 }
 
@@ -46,7 +47,7 @@ export function LitigationPanels({ m, reloadMatter }: { m: MatterDetail; reloadM
   const { can } = useAuth();
   const write = can('lit:write', 'LIT');
   const firms = useApi<{ id: string; name: string }[]>('/config/law-firms');
-  const courts = useApi<{ id: string; name: string }[]>('/config/courts');
+  const courts = useApi<{ id: string; name: string; appealDays: number | null; appealDayKind: string }[]>('/config/courts');
   const lawyers = useApi<{ id: string; name: string; firmId: string }[]>('/config/external-lawyers');
   const [dlg, setDlg] = useState<string | null>(null);
   const [sel, setSel] = useState<string>('');
@@ -188,14 +189,20 @@ export function LitigationPanels({ m, reloadMatter }: { m: MatterDetail; reloadM
         ))}</ul>}
       </Card>
 
-      <Card title={t('Settlements and judgments')} actions={write ? <Button size="sm" onClick={() => open('outcome', { kind: 'JUDGMENT', direction: 'PAYABLE' })}>{t('Record outcome')}</Button> : null}>
+      <Card title={t('Settlements and judgments')} actions={write ? <Button size="sm" onClick={() => { const ct = courts.data?.find((x) => x.id === c.courtId); open('outcome', { kind: 'JUDGMENT', direction: 'PAYABLE', appealDays: ct?.appealDays ? String(ct.appealDays) : '', appealDayKind: ct?.appealDayKind ?? 'CALENDAR', appealDecision: 'UNDECIDED' }); }}>{t('Record outcome')}</Button> : null}>
         {!c.outcomes.length ? <Empty>{t('None yet')}</Empty> : <ul className="space-y-2 text-sm">{c.outcomes.map((o) => (
           <li key={o.id} className="rounded border p-2">
             <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{label(o.kind)} · {fmtDate(o.decidedOn)} · {fmtMoney(o.amount, o.currency)} ({label(o.direction)})</span><StatusBadge value={o.paymentStatus} /></div>
             {o.terms ? <p className="whitespace-pre-wrap text-slate-600">{o.terms}</p> : null}
+            <AppealLine o={o} deadlines={c.deadlines} />
             {o.enforcement.map((x) => <div key={x.id} className="text-xs">↳ {fmtDate(x.on)} {x.action} ({label(x.status)})</div>)}
             <div className="flex flex-wrap gap-1">
-              {write ? <Button size="sm" variant="ghost" onClick={() => open('editOutcome', { kind: o.kind, decidedOn: dateOnly(o.decidedOn), amount: o.amount ?? '', direction: o.direction, paymentStatus: o.paymentStatus, terms: o.terms ?? '' }, o.id)}>{t('Edit')}</Button> : null}
+              {write ? <Button size="sm" variant="ghost" onClick={() => open('editOutcome', { kind: o.kind, decidedOn: dateOnly(o.decidedOn), amount: o.amount ?? '', direction: o.direction, paymentStatus: o.paymentStatus, terms: o.terms ?? '',
+                appealDays: o.appealDays ? String(o.appealDays) : '', appealDayKind: o.appealDayKind ?? 'CALENDAR', appealFrom: o.appealFrom ? dateOnly(o.appealFrom) : '', appealDecision: o.appealDecision ?? 'UNDECIDED', complyBy: o.complyBy ? dateOnly(o.complyBy) : '' }, o.id)}>{t('Edit')}</Button> : null}
+              {write && o.kind === 'JUDGMENT' && (!o.appealDecision || o.appealDecision === 'UNDECIDED') ? <>
+                <Button size="sm" variant="ghost" onClick={() => act.run(async () => { await api.patch(`/litigation/outcomes/${o.id}`, { appealDecision: 'APPEAL' }); await reload(); })}>{t('We will appeal')}</Button>
+                <Button size="sm" variant="ghost" onClick={() => act.run(async () => { await api.patch(`/litigation/outcomes/${o.id}`, { appealDecision: 'NO_APPEAL' }); await reload(); })}>{t('No appeal')}</Button>
+              </> : null}
               {write && o.paymentStatus !== 'PAID' ? <Button size="sm" variant="ghost" onClick={() => act.run(async () => { await api.patch(`/litigation/outcomes/${o.id}`, { paymentStatus: 'PAID' }); await reload(); })}>{t('Mark paid')}</Button> : null}
             </div>
           </li>
@@ -357,7 +364,10 @@ export function LitigationPanels({ m, reloadMatter }: { m: MatterDetail; reloadM
         <Field label={t('Summary')}>{(id) => <Textarea id={id} value={form.summary ?? ''} onChange={set('summary')} />}</Field>
       </Modal>
       <Modal open={dlg === 'outcome' || dlg === 'editOutcome'} title={dlg === 'outcome' ? t('Record settlement or judgment') : t('Edit settlement or judgment')} onClose={close} footer={save(() => {
-        const body = { kind: form.kind ?? 'JUDGMENT', decidedOn: fromDate(form.decidedOn) ?? undefined, amount: form.amount || null, direction: form.direction ?? 'PAYABLE', terms: form.terms || null, ...(dlg === 'editOutcome' ? { paymentStatus: form.paymentStatus } : {}) };
+        const judgment = (form.kind ?? 'JUDGMENT') === 'JUDGMENT';
+        const body = { kind: form.kind ?? 'JUDGMENT', decidedOn: fromDate(form.decidedOn) ?? undefined, amount: form.amount || null, direction: form.direction ?? 'PAYABLE', terms: form.terms || null, ...(dlg === 'editOutcome' ? { paymentStatus: form.paymentStatus } : {}),
+          complyBy: fromDate(form.complyBy) ?? null,
+          ...(judgment ? { appealDays: form.appealDays ? Number(form.appealDays) : null, appealDayKind: (form.appealDayKind as 'CALENDAR' | 'BUSINESS') || 'CALENDAR', appealFrom: fromDate(form.appealFrom) ?? null, appealDecision: form.appealDecision || 'UNDECIDED' } : {}) };
         return dlg === 'outcome' ? api.post(`/litigation/cases/${m.id}/outcomes`, body) : api.patch(`/litigation/outcomes/${sel}`, body);
       })}>
         {err}
@@ -367,6 +377,19 @@ export function LitigationPanels({ m, reloadMatter }: { m: MatterDetail; reloadM
         <Field label={t('Direction')}>{(id) => <Select id={id} value={form.direction ?? 'PAYABLE'} onChange={set('direction')} options={['PAYABLE', 'RECEIVABLE', 'NONE'].map((x) => ({ value: x, label: label(x) }))} />}</Field>
         {dlg === 'editOutcome' ? <Field label={t('Payment status')}>{(id) => <Select id={id} value={form.paymentStatus ?? 'PENDING'} onChange={set('paymentStatus')} options={['PENDING', 'PARTIAL', 'PAID', 'NA'].map((x) => ({ value: x, label: label(x) }))} />}</Field> : null}
         <Field label={t('Terms')}>{(id) => <Textarea id={id} value={form.terms ?? ''} onChange={set('terms')} />}</Field>
+        <Field label={t('Comply by (payment / action due)')} hint={t('Creates a deadline on the case and the calendar until it is paid.')}>{(id) => <Input id={id} type="date" value={form.complyBy ?? ''} onChange={set('complyBy')} />}</Field>
+        {(form.kind ?? 'JUDGMENT') === 'JUDGMENT' ? (
+          <fieldset className="rounded border p-3">
+            <legend className="px-1 text-sm font-medium">{t('Appeal')}</legend>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Field label={t('Appeal period (days)')} hint={t('Pre-filled from the court; check it for this judgment.')}>{(id) => <Input id={id} inputMode="numeric" value={form.appealDays ?? ''} onChange={set('appealDays')} />}</Field>
+              <Field label={t('Counted as')}>{(id) => <Select id={id} value={form.appealDayKind ?? 'CALENDAR'} onChange={set('appealDayKind')} options={[{ value: 'CALENDAR', label: t('Calendar days') }, { value: 'BUSINESS', label: t('Working days') }]} />}</Field>
+              <Field label={t('Counted from')} hint={t('Empty = the judgment date (e.g. use the date the judgment was received).')}>{(id) => <Input id={id} type="date" value={form.appealFrom ?? ''} onChange={set('appealFrom')} />}</Field>
+              <Field label={t('Decision')}>{(id) => <Select id={id} value={form.appealDecision ?? 'UNDECIDED'} onChange={set('appealDecision')} options={[{ value: 'UNDECIDED', label: t('Not decided yet') }, { value: 'APPEAL', label: t('We will appeal') }, { value: 'NO_APPEAL', label: t('No appeal') }]} />}</Field>
+            </div>
+            <p className="text-xs text-slate-500">{t('While undecided, the appeal deadline is on the case and calendar with reminders. Once decided it is closed.')}</p>
+          </fieldset>
+        ) : null}
       </Modal>
       <Modal open={dlg === 'evaluation'} title={t('Law firm performance evaluation')} onClose={close} footer={save(() => api.post(`/litigation/cases/${m.id}/evaluation`, { quality: +form.quality!, responsiveness: +form.responsiveness!, cost: +form.cost!, outcome: +form.outcome!, comments: form.comments || null }))}>
         {err}
@@ -374,5 +397,22 @@ export function LitigationPanels({ m, reloadMatter }: { m: MatterDetail; reloadM
         <Field label={t('Comments')}>{(id) => <Textarea id={id} value={form.comments ?? ''} onChange={set('comments')} />}</Field>
       </Modal>
     </>
+  );
+}
+
+/** "Appeal by 11 Mar 2027 (10 calendar days) · not decided" under a judgment. */
+function AppealLine({ o, deadlines }: { o: CaseDetail['outcomes'][number]; deadlines: CaseDetail['deadlines'] }) {
+  if (o.kind !== 'JUDGMENT' && !o.complyBy) return null;
+  const appeal = deadlines.find((d) => d.id === o.appealDeadlineId);
+  const comply = deadlines.find((d) => d.id === o.complyDeadlineId);
+  const decision = o.appealDecision === 'APPEAL' ? t('decided: appeal') : o.appealDecision === 'NO_APPEAL' ? t('decided: no appeal') : t('not decided');
+  const overdue = (d?: { dueAt: string; status: string }) => d && d.status === 'OPEN' && new Date(d.dueAt) < new Date();
+  return (
+    <div className="mt-1 space-y-0.5 text-xs" data-testid="appeal-line">
+      {o.kind === 'JUDGMENT' ? (o.appealDays
+        ? <div className={overdue(appeal) ? 'font-semibold text-red-700' : ''}>{t('Appeal by {d}', { d: appeal ? fmtDate(appeal.dueAt) : '—' })} ({o.appealDays} {o.appealDayKind === 'BUSINESS' ? t('working days') : t('calendar days')}) · {decision}</div>
+        : <div className="text-amber-800">{t('Appeal period not entered')} · {decision}</div>) : null}
+      {o.complyBy ? <div className={overdue(comply) ? 'font-semibold text-red-700' : ''}>{t('Comply by {d}', { d: fmtDate(o.complyBy) })}{comply?.status === 'DONE' ? ` · ${t('done')}` : ''}</div> : null}
+    </div>
   );
 }

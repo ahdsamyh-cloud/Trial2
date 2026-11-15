@@ -6,6 +6,7 @@ import { PrismaService } from '../../common/prisma.service';
 import { AuditService } from '../../core/audit/audit.service';
 import { CalendarService } from '../../core/calendar/calendar.service';
 import { DocumentsService } from '../../core/documents/documents.service';
+import { StorageService } from '../../core/documents/storage.service';
 import { JobsService } from '../../core/jobs/jobs.service';
 import { NotificationsService } from '../../core/notifications/notifications.service';
 import { PolicyService } from '../../core/policy/policy.service';
@@ -23,6 +24,7 @@ export class RegistersService implements OnModuleInit {
     private readonly documents: DocumentsService,
     private readonly jobs: JobsService,
     private readonly notifications: NotificationsService,
+    private readonly storage: StorageService,
   ) {}
 
   onModuleInit() {
@@ -30,6 +32,10 @@ export class RegistersService implements OnModuleInit {
     const unitRead = async () => { if (!this.policy.covers('matter:read', 'DRF') && !this.policy.covers('doc:read', 'DRF')) throw notFound('Record'); return {}; };
     const unitWrite = async () => { if (!this.policy.covers('draft:draft', 'DRF') && !this.policy.covers('matter:write', 'DRF')) throw forbidden(); };
     this.documents.registerOwner('contract', { read: async (id) => { await this.contract(id); return unitRead(); }, write: async (id) => { await this.contract(id); return unitWrite(); } });
+    this.documents.registerOwner('template', {
+      read: async (id) => { await this.template(id); return {}; },
+      write: async (id) => { await this.template(id); this.library(); },
+    });
     this.documents.registerOwner('poa', { read: async (id) => { await this.poa(id); return unitRead(); }, write: async (id) => { await this.poa(id); return unitWrite(); } });
   }
 
@@ -39,33 +45,119 @@ export class RegistersService implements OnModuleInit {
   private approveLibrary() { const u = currentUser(); if (!u.isHod && !u.roles.some((r) => r.role === 'UNIT_HEAD' && r.unit === 'DRF')) throw forbidden('Only the Drafting Unit Head or HoD can approve templates'); }
 
   // ------------------------------------------------------------------ templates & clauses
-  templates(q?: string) {
-    this.read();
-    return this.prisma.db.template.findMany({ where: q ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { category: { contains: q, mode: 'insensitive' } }] } : {}, orderBy: { name: 'asc' } });
-  }
+  private canApprove() { const u = currentUser(); return u.isHod || u.roles.some((r) => r.role === 'UNIT_HEAD' && r.unit === 'DRF'); }
+  /** People who maintain the library see drafts and retired items; everyone else sees approved items only. */
+  private seesDrafts() { return this.policy.covers('draft:library', 'DRF'); }
 
-  async saveTemplate(id: string | null, data: { name: string; category: string; body?: string | null; documentId?: string | null; status?: 'DRAFT' | 'APPROVED' | 'RETIRED' }) {
-    this.library();
-    if (data.status === 'APPROVED') this.approveLibrary();
-    const row = id ? await this.prisma.db.template.update({ where: { id }, data }) : await this.prisma.db.template.create({ data: { ...data, status: data.status === 'APPROVED' ? 'APPROVED' : data.status ?? 'DRAFT' } });
-    await this.audit.log({ action: id ? 'drf.template.updated' : 'drf.template.created', entityType: 'Template', entityId: row.id, after: { name: row.name, status: row.status } });
-    return row;
-  }
-
-  clauses(q?: string, tag?: string) {
+  templates(q?: string, kind?: string) {
     this.read();
-    return this.prisma.db.clause.findMany({
-      where: { ...(q ? { OR: [{ title: { contains: q, mode: 'insensitive' } }, { body: { contains: q, mode: 'insensitive' } }] } : {}), ...(tag ? { tags: { has: tag } } : {}) },
-      orderBy: { title: 'asc' },
+    return this.prisma.db.template.findMany({
+      where: { AND: [
+        q ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { category: { contains: q, mode: 'insensitive' } }, { body: { contains: q, mode: 'insensitive' } }] } : {},
+        kind ? { kind } : {}, this.seesDrafts() ? {} : { status: 'APPROVED' }] },
+      orderBy: [{ kind: 'asc' }, { name: 'asc' }],
+      include: { documents: { where: { deletedAt: null }, select: { id: true, title: true, currentVersionNo: true } } },
     });
   }
 
-  async saveClause(id: string | null, data: { title: string; body: string; tags: string[]; status?: string }) {
+  async template(id: string) {
+    this.read();
+    const t = await this.prisma.db.template.findUnique({ where: { id } });
+    if (!t || (!this.seesDrafts() && t.status !== 'APPROVED')) throw notFound('Template');
+    return t;
+  }
+
+  /**
+   * Create/change a template. A change to its wording bumps the version and keeps the previous text
+   * (LibraryVersion). Only the Drafting Unit Head / HoD approve; if anyone else changes an approved
+   * template it goes back to DRAFT until it is approved again.
+   */
+  async saveTemplate(id: string | null, data: { name: string; kind?: string; category: string; body?: string | null; guidance?: string | null; status?: 'DRAFT' | 'APPROVED' | 'RETIRED'; note?: string | null }) {
     this.library();
-    if (data.status === 'APPROVED') this.approveLibrary();
-    const row = id ? await this.prisma.db.clause.update({ where: { id }, data }) : await this.prisma.db.clause.create({ data: { ...data, status: data.status ?? 'DRAFT' } });
-    await this.audit.log({ action: id ? 'drf.clause.updated' : 'drf.clause.created', entityType: 'Clause', entityId: row.id, after: { title: row.title, status: row.status } });
+    const { note, ...fields } = data;
+    if (fields.status === 'APPROVED') this.approveLibrary();
+    const user = currentUser();
+    const row = await this.prisma.tx(async () => {
+      if (!id) {
+        const approved = fields.status === 'APPROVED';
+        return this.prisma.db.template.create({ data: { ...fields, status: fields.status ?? 'DRAFT', updatedById: user.id, ...(approved ? { approvedById: user.id, approvedAt: new Date() } : {}) } });
+      }
+      const before = await this.prisma.db.template.findUnique({ where: { id } });
+      if (!before) throw notFound('Template');
+      const wordingChanged = (['name', 'kind', 'category', 'body', 'guidance'] as const).some((k) => fields[k] !== undefined && (fields[k] ?? null) !== (before[k] ?? null));
+      let status = fields.status ?? before.status;
+      if (wordingChanged && before.status === 'APPROVED' && !this.canApprove()) status = 'DRAFT';
+      if (wordingChanged) await this.prisma.db.libraryVersion.create({ data: { itemType: 'TEMPLATE', itemId: id, version: before.version, snapshot: { name: before.name, kind: before.kind, category: before.category, body: before.body, guidance: before.guidance, status: before.status }, changedById: user.id, note: note ?? null } });
+      const nowApproved = status === 'APPROVED' && (before.status !== 'APPROVED' || wordingChanged);
+      return this.prisma.db.template.update({ where: { id }, data: { ...fields, status, updatedById: user.id, ...(wordingChanged ? { version: before.version + 1 } : {}), ...(nowApproved ? { approvedById: user.id, approvedAt: new Date() } : status !== 'APPROVED' ? { approvedById: null, approvedAt: null } : {}) } });
+    });
+    await this.audit.log({ action: id ? 'drf.template.updated' : 'drf.template.created', entityType: 'Template', entityId: row.id, after: { name: row.name, status: row.status, version: row.version } });
     return row;
+  }
+
+  clauses(q?: string, tag?: string, category?: string) {
+    this.read();
+    return this.prisma.db.clause.findMany({
+      where: { AND: [
+        q ? { OR: [{ title: { contains: q, mode: 'insensitive' } }, { body: { contains: q, mode: 'insensitive' } }] } : {}, tag ? { tags: { has: tag } } : {},
+        category ? { category } : {}, this.seesDrafts() ? {} : { status: 'APPROVED' }] },
+      orderBy: [{ category: 'asc' }, { title: 'asc' }],
+    });
+  }
+
+  async saveClause(id: string | null, data: { title: string; body: string; tags: string[]; category?: string | null; guidance?: string | null; status?: string; note?: string | null }) {
+    this.library();
+    const { note, ...fields } = data;
+    if (fields.status === 'APPROVED') this.approveLibrary();
+    const user = currentUser();
+    const row = await this.prisma.tx(async () => {
+      if (!id) {
+        const approved = fields.status === 'APPROVED';
+        return this.prisma.db.clause.create({ data: { ...fields, status: fields.status ?? 'DRAFT', updatedById: user.id, ...(approved ? { approvedById: user.id, approvedAt: new Date() } : {}) } });
+      }
+      const before = await this.prisma.db.clause.findUnique({ where: { id } });
+      if (!before) throw notFound('Clause');
+      const wordingChanged = fields.title !== before.title || fields.body !== before.body || (fields.category !== undefined && (fields.category ?? null) !== before.category) || (fields.guidance !== undefined && (fields.guidance ?? null) !== before.guidance);
+      let status = fields.status ?? before.status;
+      if (wordingChanged && before.status === 'APPROVED' && !this.canApprove()) status = 'DRAFT';
+      if (wordingChanged) await this.prisma.db.libraryVersion.create({ data: { itemType: 'CLAUSE', itemId: id, version: before.version, snapshot: { title: before.title, category: before.category, body: before.body, guidance: before.guidance, tags: before.tags, status: before.status }, changedById: user.id, note: note ?? null } });
+      const nowApproved = status === 'APPROVED' && (before.status !== 'APPROVED' || wordingChanged);
+      return this.prisma.db.clause.update({ where: { id }, data: { ...fields, status, updatedById: user.id, ...(wordingChanged ? { version: before.version + 1 } : {}), ...(nowApproved ? { approvedById: user.id, approvedAt: new Date() } : status !== 'APPROVED' ? { approvedById: null, approvedAt: null } : {}) } });
+    });
+    await this.audit.log({ action: id ? 'drf.clause.updated' : 'drf.clause.created', entityType: 'Clause', entityId: row.id, after: { title: row.title, status: row.status, version: row.version } });
+    return row;
+  }
+
+  /** Start a drafting request from an approved template: its file(s) are copied in (and scanned again) as the first document. */
+  async useTemplate(requestId: string, templateId: string) {
+    const m = await this.policy.assertMatter(requestId, 'doc:write');
+    if (m.unit !== 'DRF') throw notFound('Request');
+    await this.policy.assertWrite(m);
+    const tpl = await this.template(templateId);
+    if (tpl.status !== 'APPROVED') throw badRequest('Only approved templates can be used');
+    const docs = await this.prisma.db.document.findMany({ where: { templateId, deletedAt: null }, include: { versions: { orderBy: { versionNo: 'desc' }, take: 1 } } });
+    const files = docs.map((d) => d.versions[0]).filter((v): v is NonNullable<typeof v> => !!v && v.scanStatus === 'CLEAN');
+    if (!files.length) throw badRequest(tpl.body ? 'This template has no file; copy its text instead' : 'This template has no file yet');
+    const out = [];
+    for (const v of files) {
+      const buffer = await this.storage.get('clean', v.storageKey);
+      out.push(await this.documents.upload({ ownerType: 'matter', ownerId: requestId, title: `${tpl.name} (template v${tpl.version})`, stageLabel: 'Template', comment: `From template "${tpl.name}" version ${tpl.version}`, file: { originalname: v.filename, buffer } }));
+    }
+    await this.audit.log({ action: 'drf.template.used', entityType: 'Template', entityId: templateId, meta: { matterId: requestId, version: tpl.version } });
+    return { copied: out.length };
+  }
+
+  /** Earlier wordings of a template or clause, newest first, with who changed it. */
+  async libraryVersions(itemType: 'TEMPLATE' | 'CLAUSE', id: string) {
+    if (itemType === 'TEMPLATE') await this.template(id);
+    else {
+      this.read();
+      const c = await this.prisma.db.clause.findUnique({ where: { id } });
+      if (!c || (!this.seesDrafts() && c.status !== 'APPROVED')) throw notFound('Clause');
+    }
+    const rows = await this.prisma.db.libraryVersion.findMany({ where: { itemType, itemId: id }, orderBy: { version: 'desc' } });
+    const users = await this.prisma.base.user.findMany({ where: { id: { in: rows.map((r) => r.changedById).filter((x): x is string => !!x) } }, select: { id: true, displayName: true } });
+    return rows.map((r) => ({ ...r, changedBy: users.find((u) => u.id === r.changedById)?.displayName ?? null }));
   }
 
   // ------------------------------------------------------------------ contracts

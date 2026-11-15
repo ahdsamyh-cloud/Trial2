@@ -18,7 +18,7 @@ const LISTS: Record<string, { title: string; fields: FieldDef[] }> = {
   'law-firms': { title: 'External law firms', fields: [{ key: 'name', label: 'Name' }, { key: 'email', label: 'Email' }, { key: 'phone', label: 'Phone' }, { key: 'address', label: 'Address' }, { key: 'active', label: 'Active', type: 'bool' }] },
   'external-lawyers': { title: 'External lawyers', fields: [{ key: 'firmId', label: 'Firm id' }, { key: 'name', label: 'Name' }, { key: 'email', label: 'Email' }, { key: 'phone', label: 'Phone' }] },
   regulators: { title: 'Regulators', fields: [{ key: 'name', label: 'Name' }, { key: 'website', label: 'Website' }] },
-  courts: { title: 'Courts & forums', fields: [{ key: 'name', label: 'Name' }, { key: 'kind', label: 'Kind', type: 'select', options: ['COURT', 'TRIBUNAL', 'ARBITRATION'] }, { key: 'jurisdiction', label: 'Jurisdiction' }] },
+  courts: { title: 'Courts & forums', fields: [{ key: 'name', label: 'Name' }, { key: 'kind', label: 'Kind', type: 'select', options: ['COURT', 'TRIBUNAL', 'ARBITRATION'] }, { key: 'jurisdiction', label: 'Jurisdiction' }, { key: 'appealDays', label: 'Appeal period (days; empty = enter per judgment)', type: 'number' }, { key: 'appealDayKind', label: 'Appeal days counted as', type: 'select', options: ['CALENDAR', 'BUSINESS'] }] },
   'retention-policies': { title: 'Retention periods', fields: [{ key: 'recordType', label: 'Record type' }, { key: 'years', label: 'Years', type: 'number' }, { key: 'trigger', label: 'Counted from' }] },
 };
 
@@ -41,7 +41,7 @@ export default function ConfigAdmin() {
     const body: Record<string, unknown> = {};
     for (const f of def.fields) {
       const v = form[f.key];
-      body[f.key] = f.type === 'number' ? Number(v) : f.type === 'bool' ? !!v : v === '' ? null : v;
+      body[f.key] = f.type === 'number' ? (v === '' || v === null || v === undefined ? null : Number(v)) : f.type === 'bool' ? !!v : v === '' ? null : v;
     }
     if (edit?.id) await api.patch(`/config/${list}/${edit.id}`, body); else await api.post(`/config/${list}`, body);
     setEdit(null); await reload();
@@ -55,12 +55,12 @@ export default function ConfigAdmin() {
       <Card title={t(def.title)} actions={manage ? <Button size="sm" onClick={() => open(null)}>{t('Add')}</Button> : null}>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
-            <thead><tr>{def.fields.map((f) => <th key={f.key} className="px-2 py-1 text-left text-xs uppercase text-slate-500">{t(f.label)}</th>)}<th /></tr></thead>
+            <thead><tr>{def.fields.map((f) => <th key={f.key} className="px-2 py-1 text-start text-xs uppercase text-slate-500">{t(f.label)}</th>)}<th /></tr></thead>
             <tbody className="divide-y">
               {data?.map((r) => (
                 <tr key={r.id}>
                   {def.fields.map((f) => <td key={f.key} className="max-w-xs truncate px-2 py-1.5">{f.type === 'bool' ? (r[f.key] ? '✓' : '—') : String(r[f.key] ?? '—')}</td>)}
-                  <td className="whitespace-nowrap px-2 py-1 text-right">{manage ? <><Button size="sm" variant="ghost" onClick={() => open(r)}>{t('Edit')}</Button><Button size="sm" variant="ghost" onClick={() => act.run(async () => { if (confirm(t('Delete this item?'))) { await api.del(`/config/${list}/${r.id}`); await reload(); } })}>{t('Delete')}</Button></> : null}</td>
+                  <td className="whitespace-nowrap px-2 py-1 text-end">{manage ? <><Button size="sm" variant="ghost" onClick={() => open(r)}>{t('Edit')}</Button><Button size="sm" variant="ghost" onClick={() => act.run(async () => { if (confirm(t('Delete this item?'))) { await api.del(`/config/${list}/${r.id}`); await reload(); } })}>{t('Delete')}</Button></> : null}</td>
                 </tr>
               ))}
             </tbody>
@@ -69,7 +69,7 @@ export default function ConfigAdmin() {
       </Card>
       <Card title={t('System settings')}>
         <ul className="divide-y text-sm">
-          {Object.entries(settings.data ?? {}).map(([k, v]) => (
+          {Object.entries(settings.data ?? {}).filter(([k]) => k !== 'i18n.dv').map(([k, v]) => (
             <li key={k} className="flex flex-wrap items-center justify-between gap-2 py-2">
               <div><div className="font-medium">{label(k.replace('.', '_'))}</div><code className="text-xs text-slate-600">{JSON.stringify(v)}</code></div>
               {manage ? <Button size="sm" variant="ghost" onClick={() => setSetting({ key: k, value: JSON.stringify(v, null, 1) })}>{t('Edit')}</Button> : null}

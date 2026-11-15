@@ -6,7 +6,7 @@ import { updatable } from './common/zod';
 import { changedFields } from './core/audit/audit.service';
 import { ReportTemplatesService } from './core/reports/report-templates.service';
 
-const svc = new ReportTemplatesService(null as never, null as never, null as never, null as never, null as never);
+const svc = new ReportTemplatesService(null as never, null as never, null as never, null as never, null as never, null as never, null as never);
 
 describe('updatable(): PATCH schemas never apply defaults', () => {
   const create = z.object({ name: z.string(), currency: z.string().default('MVR'), active: z.boolean().default(true), tags: z.array(z.string()).default([]) }).strict();

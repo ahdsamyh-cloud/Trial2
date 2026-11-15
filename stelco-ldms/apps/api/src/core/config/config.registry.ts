@@ -36,7 +36,8 @@ export const CONFIG_ENTITIES: Record<string, ConfigEntity> = {
   regulators: { model: 'regulator', orderBy: { name: 'asc' }, searchFields: ['name'],
     schema: z.object({ name, website: z.string().url().max(300).nullish() }).strict() },
   courts: { model: 'court', orderBy: { name: 'asc' }, searchFields: ['name'],
-    schema: z.object({ name, kind: z.enum(['COURT', 'TRIBUNAL', 'ARBITRATION']).default('COURT'), jurisdiction: z.string().max(200).nullish() }).strict() },
+    schema: z.object({ name, kind: z.enum(['COURT', 'TRIBUNAL', 'ARBITRATION']).default('COURT'), jurisdiction: z.string().max(200).nullish(),
+      appealDays: z.number().int().min(1).max(365).nullish(), appealDayKind: z.enum(['CALENDAR', 'BUSINESS']).default('CALENDAR') }).strict() },
   'retention-policies': { model: 'retentionPolicy', orderBy: { recordType: 'asc' }, searchFields: ['recordType'],
     schema: z.object({ recordType: z.string().trim().min(1).max(60), years: z.number().int().min(1).max(100), trigger: z.string().max(40) }).strict() },
 };
@@ -52,6 +53,8 @@ export const SETTINGS: Record<string, ZodTypeAny> = {
   'intake.ackTemplateCode': z.string().max(40),
   'access.officersEditAnyMatter': z.boolean(),
   'compliance.reminderDays': z.number().int().min(1).max(90),
+  'litigation.hearingReminders': z.object({ dayBefore: z.boolean(), morningDigest: z.boolean(), includeHod: z.boolean() }).strict(),
+  'i18n.dv': z.record(z.string().max(500), z.string().max(2000)),
   'encryption.fields': z.array(z.string()),
 };
 
@@ -65,5 +68,7 @@ export const SETTING_DEFAULTS: Record<string, unknown> = {
   'intake.ackTemplateCode': 'INTAKE_ACK',
   'access.officersEditAnyMatter': true,
   'compliance.reminderDays': 7,
+  'litigation.hearingReminders': { dayBefore: true, morningDigest: true, includeHod: true },
+  'i18n.dv': {},
   'encryption.fields': ['Outcome.amount', 'LitigationCase.exposure', 'Matter.description(restricted)', 'Comment.body(restricted)', 'MfaFactor.secret'],
 };

@@ -1,6 +1,7 @@
 'use client';
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 import { api } from './api';
+import { preferredLanguage, setLanguage } from './i18n';
 
 export interface Me {
   id: string;
@@ -23,7 +24,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const refresh = async () => {
-    try { setMe(await api.get<Me>('/auth/me')); } catch { setMe(null); } finally { setLoading(false); }
+    try {
+      const user = await api.get<Me>('/auth/me');
+      // Language before the first signed-in render, so the whole app draws once in the chosen language.
+      if (user.stage === 'FULL' && preferredLanguage() === 'dv') {
+        const overrides = await api.get<Record<string, string>>('/config/i18n/dv').catch(() => ({}));
+        setLanguage('dv', overrides);
+      }
+      setMe(user);
+    } catch { setMe(null); } finally { setLoading(false); }
   };
   useEffect(() => { void refresh(); }, []);
   const can = (perm: string, unit?: string) => {

@@ -25,9 +25,9 @@ Run these from the `stelco-ldms` folder.
 |---|---|---|---|
 | `pnpm typecheck` | The code compiles with no type errors. | — | ~30 s |
 | `pnpm test` | **Unit tests** (37): business-day calendar and SLA maths, permissions, password rules, file-type checks, encryption, redirect guard. | nothing running | ~10 s |
-| `pnpm test:int` | **API integration tests** (81). Each test sends real requests to the API, backed by real Postgres, Redis and ClamAV. They cover every unit's workflow, access rules (other unit, other department, restricted matters → 404), audit log, uploads and virus blocking, retention, and key rotation. | Docker services running | ~1–2 min |
-| `pnpm test:int:single` | The same 81 integration tests with a **one-connection** database pool. Fails if any code takes a second connection while holding a transaction, which deadlocks under load. | Docker services running | ~1–2 min |
-| `pnpm test:e2e` | **Browser tests** (18). Playwright drives Chrome as real users: sign-in with 6-digit code, intake, litigation, drafting, compliance, awareness QR check-in, dashboards, CSP and accessibility (WCAG 2.1 AA). Covers desktop and phone layouts. | `pnpm dev` running in **another window**, and browsers installed once with `pnpm e2e:install` | ~2–3 min |
+| `pnpm test:int` | **API integration tests** (96). Each test sends real requests to the API, backed by real Postgres, Redis and ClamAV. They cover every unit's workflow, access rules (other unit, other department, restricted matters → 404), audit log, uploads and virus blocking, retention, and key rotation. | Docker services running | ~1–2 min |
+| `pnpm test:int:single` | The same 96 integration tests with a **one-connection** database pool. Fails if any code takes a second connection while holding a transaction, which deadlocks under load. | Docker services running | ~1–2 min |
+| `pnpm test:e2e` | **Browser tests** (28). Playwright drives Chrome as real users: sign-in with 6-digit code, intake, litigation, drafting, compliance, awareness QR check-in, dashboards, CSP and accessibility (WCAG 2.1 AA). Covers desktop and phone layouts. | `pnpm dev` running in **another window**, and browsers installed once with `pnpm e2e:install` | ~2–3 min |
 
 **Notes:**
 - `pnpm test:int` uses a separate database, `ldms_test`, and **wipes it on every run**. Your dev data in `ldms` is not touched. Its settings are in `apps/api/.env.test`, which `pnpm setup:env` creates.
@@ -96,9 +96,18 @@ Tick each scenario when it behaves as described.
 - [ ] **Edit summary** on a hearing that already has one.
 - [ ] Sign in as `lo.lit2` (not assigned) and edit a case: it works, and **Change history** (bottom of the page) shows who changed what, with the old and new value.
 
+### C4. Hearing reminders and judgments (`uh.lit`, `lo.lit1`)
+- [ ] The afternoon before a hearing (on Thursday for a Sunday hearing), the responsible officer, assignees and the Litigation Unit Head get a **Hearing reminder** (court, time, purpose, chit). At 7:30 on the day, each person gets one **Today's hearings** message (HoD too). On a confidential case only the named people get it. Settings: `litigation.hearingReminders` (IT admin → Configuration).
+- [ ] **Record outcome** → Judgment with an **Appeal period (days)**. The case shows "Appeal by <date>" and the deadline is on the calendar with reminders. **We will appeal** / **No appeal** closes the deadline.
+- [ ] **Comply by** date on a judgment or settlement → a deadline until it is marked paid.
+- [ ] IT admin: Configuration → Courts & forums → set a court's **Appeal period** so it is filled in automatically. (Enter the periods the law sets; LDMS ships with none.)
+
 ### C3. Dhivehi
 - [ ] Click **ދިވެހި** in the top bar (or Ctrl+Shift+D) and type in any field: Thaana letters appear, written right to left. Click again to go back to English.
 - [ ] Text saved in Dhivehi shows right to left everywhere (case, hearing, comments).
+- [ ] Click **ދިވެހި** with the language icon (top bar): menus and buttons change to Dhivehi and the page runs right to left. Click **English** to go back. (Only part of the wording is translated so far; the rest stays English.)
+- [ ] `hod`: **Dhivehi wording** (menu) → correct or add wording → **Save**. Users see it next time they open LDMS in Dhivehi.
+- [ ] A PDF report with a Dhivehi department name or title prints the Thaana letters correctly.
 
 ### D. Drafting (`uh.drf`, `lo.drf1`, `lo.drf2`)
 - [ ] Register a drafting request and assign `lo.drf1` as drafter and `lo.drf2` as reviewer.
@@ -109,6 +118,8 @@ Tick each scenario when it behaves as described.
 - [ ] On a closed request: **Start a new version**. The new request shows **Versions of this request** with the earlier one(s) and their documents.
 - [ ] Policy review: upload a draft, then comment choosing **About document version**. The comment shows which version it is about.
 - [ ] **External lawyers** → **Send to external lawyer** (firm, work, due date) → later **Mark received**. Overdue ones are flagged.
+- [ ] Library (**Templates & clauses** tab): `lo.drf1` adds a template (type, category, guidance, text) and attaches its Word file (open the template). It stays **Draft** until `uh.drf` approves it. If `lo.drf1` changes approved wording it goes back to Draft; **Earlier versions** shows the old wording and what changed.
+- [ ] On a drafting request: **Start from a template** → choose an approved template → its file is copied into Documents.
 
 ### E. Compliance (`lo.cmp1`, `uh.cmp`, `req.fin`)
 - [ ] `uh.cmp` (or `hod`): open a law → **Assign research** to `lo.cmp1` with a due date.
@@ -132,10 +143,12 @@ Tick each scenario when it behaves as described.
 - [ ] **Reports** → **Placeholders & samples** → download a sample Excel; put placeholders like `{{report.period}}` and `{{lit.hearings.date}}` in your own Excel or Word format.
 - [ ] **My report formats** → **Upload a format** → choose Weekly/Monthly → **Generate**. The file comes back filled with this week's / month's data.
 - [ ] **Standard report** tab: weekly, monthly or annual, for one unit or all, as PDF or Excel.
+- [ ] Edit a Weekly (or Monthly) format → **Send automatically** → tick recipients. Every Sunday 8:00 (or the 1st of the month) they get a notification/email with a link; the link downloads the report filled with the data they may see.
 
 ### G. Dashboards, search, reports
 - [ ] `hod`: the HoD dashboard shows open matters by unit, SLA status and overdue items. Global search finds matters and documents.
 - [ ] `uh.lit`: the dashboard shows only Litigation.
+- [ ] **Workload per lawyer** (dashboard): open matters, to review, hearings in 7 days, overdue deadlines, SLA breaches, research and closed in 30 days per person. HoD sees everyone; a Unit Head only their unit.
 - [ ] `mgmt`: sees **Management overview** totals only. Restricted matters count as "confidential", with no titles.
 - [ ] `hod`: download the monthly management report as Excel and PDF.
 

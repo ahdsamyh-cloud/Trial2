@@ -22,7 +22,7 @@ export default function LitigationReports() {
       <Card title={t('Contingent liability / exposure (open cases)')} actions={<Button size="sm" onClick={() => act.run(() => download('/litigation/reports/exposure?format=xlsx'))}>{t('Export for Finance (Excel)')}</Button>}>
         <p className="mb-2 text-xs text-slate-500">{exp.data?.note}</p>
         <table className="min-w-full text-sm">
-          <thead><tr className="text-left text-xs uppercase text-slate-500"><th className="py-1">{t('Currency')}</th><th>{t('Risk')}</th><th>{t('Cases')}</th><th>{t('Total claimed')}</th><th>{t('Estimated exposure')}</th></tr></thead>
+          <thead><tr className="text-start text-xs uppercase text-slate-500"><th className="py-1">{t('Currency')}</th><th>{t('Risk')}</th><th>{t('Cases')}</th><th>{t('Total claimed')}</th><th>{t('Estimated exposure')}</th></tr></thead>
           <tbody className="divide-y">{Object.entries(exp.data?.totals ?? {}).flatMap(([cur, byRisk]) => Object.entries(byRisk).map(([risk, v]) => (
             <tr key={cur + risk}><td className="py-1">{cur}</td><td>{label(risk)}</td><td>{v.count}</td><td>{fmtMoney(v.claim, cur)}</td><td className="font-semibold">{fmtMoney(v.exposure, cur)}</td></tr>
           )))}</tbody>
@@ -38,7 +38,7 @@ export default function LitigationReports() {
           </div>
         </Card>
         <Card title={t('Law firm performance (average of evaluations, out of 5)')}>
-          {!br.data?.firmPerformance.length ? <Empty>{t('No evaluations yet')}</Empty> : <table className="min-w-full text-sm"><thead><tr className="text-left text-xs uppercase text-slate-500"><th>{t('Firm')}</th><th>{t('Quality')}</th><th>{t('Responsiveness')}</th><th>{t('Cost')}</th><th>{t('Outcome')}</th><th>n</th></tr></thead>
+          {!br.data?.firmPerformance.length ? <Empty>{t('No evaluations yet')}</Empty> : <table className="min-w-full text-sm"><thead><tr className="text-start text-xs uppercase text-slate-500"><th>{t('Firm')}</th><th>{t('Quality')}</th><th>{t('Responsiveness')}</th><th>{t('Cost')}</th><th>{t('Outcome')}</th><th>n</th></tr></thead>
             <tbody>{br.data.firmPerformance.map((f) => <tr key={f.firm}><td>{f.firm}</td><td>{f.quality?.toFixed(1)}</td><td>{f.responsiveness?.toFixed(1)}</td><td>{f.cost?.toFixed(1)}</td><td>{f.outcome?.toFixed(1)}</td><td>{f.evaluations}</td></tr>)}</tbody></table>}
         </Card>
       </div>

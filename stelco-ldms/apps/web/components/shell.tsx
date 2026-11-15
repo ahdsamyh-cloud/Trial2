@@ -2,10 +2,10 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { ReactNode, useEffect, useState } from 'react';
-import { Bell, BookOpen, Calendar, ClipboardCheck, FileText, Gavel, GraduationCap, Home, Inbox, LayoutDashboard, LogOut, Menu, Search, Settings, Shield, Users, X, Briefcase, Send, Upload, Archive, FileBarChart } from 'lucide-react';
+import { Bell, BookOpen, Calendar, ClipboardCheck, FileText, Gavel, GraduationCap, Home, Inbox, LayoutDashboard, LogOut, Menu, Search, Settings, Shield, Users, X, Briefcase, Send, Upload, Archive, FileBarChart, Languages } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
-import { t } from '@/lib/i18n';
+import { currentLanguage, savePreferredLanguage, t } from '@/lib/i18n';
 import { ReauthDialog } from './reauth';
 import { ThaanaToggle } from './thaana-toggle';
 import { cx } from './ui';
@@ -50,6 +50,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     { href: '/knowledge', label: t('Bulletins & FAQ'), icon: <BookOpen size={18} />, show: true },
     { href: '/admin/imports', label: t('Data import'), icon: <Upload size={18} />, show: can('lit:import') || can('draft:draft', 'DRF') || can('cmp:write', 'CMP') || can('awr:write', 'AWR') },
     { href: '/admin/users', label: t('Users'), icon: <Users size={18} />, show: can('users:read') || can('users:manage') },
+    { href: '/admin/translations', label: t('Dhivehi wording'), icon: <Languages size={18} />, show: !!me.roles.some((r) => r.role === 'HOD') || can('config:manage') },
     { href: '/admin/config', label: t('Configuration'), icon: <Settings size={18} />, show: can('config:read') && (can('config:manage') || legal) },
     { href: '/admin/retention', label: t('Retention'), icon: <Archive size={18} />, show: can('disposal:approve') },
     { href: '/admin/audit', label: t('Audit log'), icon: <Shield size={18} />, show: can('audit:read') || can('audit:read.system') },
@@ -82,7 +83,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-slate-200 bg-white px-3 md:px-5">
         <button className="rounded p-1.5 md:hidden" onClick={() => setOpen(!open)} aria-label={open ? t('Close menu') : t('Open menu')} aria-expanded={open}>{open ? <X size={20} /> : <Menu size={20} />}</button>
         <Link href="/" className="flex items-center gap-2 font-semibold text-brand-900"><img src="/icons/icon.svg" alt="" width={26} height={26} />{t('STELCO Legal')}</Link>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ms-auto flex items-center gap-1">
+          <button type="button" onClick={() => { savePreferredLanguage(currentLanguage() === 'dv' ? 'en' : 'dv'); location.reload(); }}
+            className="flex items-center gap-1 rounded px-2 py-1 text-sm text-slate-700 hover:bg-slate-100" title={t('Language')} data-testid="language-switch">
+            <Languages size={16} aria-hidden /><span>{currentLanguage() === 'dv' ? 'English' : <span lang="dv">ދިވެހި</span>}</span><span className="sr-only"> {t('Language')}</span>
+          </button>
           <ThaanaToggle />
           <Link href="/notifications" className="relative rounded p-2 hover:bg-slate-100" aria-label={t('Notifications ({n} unread)', { n: unread })}>
             <Bell size={18} />{unread ? <span className="absolute -right-0.5 -top-0.5 rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white">{unread > 99 ? '99+' : unread}</span> : null}
@@ -92,7 +97,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
       <div className="flex">
-        <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-60 shrink-0 overflow-y-auto border-r border-slate-200 bg-white p-3 md:block">{NavList}</aside>
+        <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-60 shrink-0 overflow-y-auto border-e border-slate-200 bg-white p-3 md:block">{NavList}</aside>
         {open ? <div className="fixed inset-0 top-14 z-20 overflow-y-auto bg-white p-3 md:hidden">{NavList}<Link href="/account" className="mt-3 block px-3 py-2 text-sm">{t('My account')}</Link></div> : null}
         <main id="main" className="min-w-0 flex-1 px-4 py-5 md:px-6">{children}</main>
       </div>

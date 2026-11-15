@@ -16,7 +16,17 @@ const templateFields = z.object({
   name: z.string().trim().min(2).max(200),
   unit: z.union([z.enum(UNITS), z.literal('')]).optional().transform((v) => (v ? v : null)),
   period: z.enum(['WEEKLY', 'MONTHLY', 'ANY']).default('ANY'),
+  autoSend: z.enum(['true', 'false']).optional().transform((v) => (v === undefined ? undefined : v === 'true')),
+  recipientIds: z.string().max(2000).optional().transform((v) => recipients(v)),
 }).strict();
+
+/** Multipart form field: user ids separated by commas. */
+function recipients(v: string | undefined) {
+  if (v === undefined) return undefined;
+  const ids = v.split(',').map((x) => x.trim()).filter(Boolean);
+  if (ids.length > 50 || ids.some((x) => !/^[a-z0-9]{8,40}$/i.test(x))) throw badRequest('Invalid recipients');
+  return ids;
+}
 
 @Controller('reports')
 export class ReportsController {
@@ -69,7 +79,7 @@ export class ReportsController {
   create(@Body() body: unknown, @UploadedFile() file?: Express.Multer.File) {
     if (!file) throw badRequest('Choose the Excel or Word file of the report format');
     const b = parse(templateFields, body);
-    return this.templates.create({ name: b.name, unit: b.unit as Unit | null, period: b.period }, file);
+    return this.templates.create({ name: b.name, unit: b.unit as Unit | null, period: b.period, autoSend: b.autoSend, recipientIds: b.recipientIds }, file);
   }
 
   @Patch('templates/:id')
@@ -81,6 +91,8 @@ export class ReportsController {
       unit: z.union([z.enum(UNITS), z.literal('')]).optional().transform((v) => (v === undefined ? undefined : v || null)),
       period: z.enum(['WEEKLY', 'MONTHLY', 'ANY']).optional(),
       active: z.enum(['true', 'false']).optional().transform((v) => (v === undefined ? undefined : v === 'true')),
+      autoSend: z.enum(['true', 'false']).optional().transform((v) => (v === undefined ? undefined : v === 'true')),
+      recipientIds: z.string().max(2000).optional().transform((v) => recipients(v)),
     }).strict(), body);
     return this.templates.update(id, { ...b, unit: b.unit as Unit | null | undefined }, file);
   }

@@ -20,9 +20,9 @@ import { ExtractService } from './extract.service';
 import { cleanFilename, FileRejected, sniff } from './filetype';
 import { StorageService } from './storage.service';
 
-export const OWNER_FKS = ['matterId', 'intakeId', 'hearingId', 'lawId', 'checkItemId', 'findingId', 'sessionId', 'contractId', 'poaId'] as const;
+export const OWNER_FKS = ['matterId', 'intakeId', 'hearingId', 'lawId', 'checkItemId', 'findingId', 'sessionId', 'contractId', 'poaId', 'templateId'] as const;
 export type OwnerFk = (typeof OWNER_FKS)[number];
-export type OwnerType = 'matter' | 'intake' | 'hearing' | 'law' | 'checkItem' | 'finding' | 'session' | 'contract' | 'poa' | 'library';
+export type OwnerType = 'matter' | 'intake' | 'hearing' | 'law' | 'checkItem' | 'finding' | 'session' | 'contract' | 'poa' | 'template' | 'library';
 
 export interface OwnerAccess {
   /** Throw if the current user may not read documents of this owner. */
@@ -33,7 +33,7 @@ export interface OwnerAccess {
 
 const FK_OF: Record<Exclude<OwnerType, 'library'>, OwnerFk> = {
   matter: 'matterId', intake: 'intakeId', hearing: 'hearingId', law: 'lawId', checkItem: 'checkItemId',
-  finding: 'findingId', session: 'sessionId', contract: 'contractId', poa: 'poaId',
+  finding: 'findingId', session: 'sessionId', contract: 'contractId', poa: 'poaId', template: 'templateId',
 };
 
 type OwnerRef = { [K in OwnerFk]?: string | null };

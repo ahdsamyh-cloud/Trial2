@@ -77,27 +77,57 @@ function FullDashboard() {
             <div className="h-56" role="img" aria-label={chart.map((c) => `${c.unit}: ${c.open}`).join(', ')}>
               <ResponsiveContainer><BarChart data={chart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="unit" fontSize={11} /><YAxis allowDecimals={false} fontSize={11} /><Tooltip /><Legend /><Bar dataKey="open" name={t('Open')} fill="#1f6fd1" /></BarChart></ResponsiveContainer>
             </div>
-            <table className="mt-2 w-full text-xs"><tbody>{data.openByUnitStatus.map((r) => <tr key={r.unit + r.status}><td>{UNIT_NAMES[r.unit as 'LIT']}</td><td>{label(r.status)}</td><td className="text-right font-semibold">{r.count}</td></tr>)}</tbody></table>
+            <table className="mt-2 w-full text-xs"><tbody>{data.openByUnitStatus.map((r) => <tr key={r.unit + r.status}><td>{UNIT_NAMES[r.unit as 'LIT']}</td><td>{label(r.status)}</td><td className="text-end font-semibold">{r.count}</td></tr>)}</tbody></table>
           </Card>
           <Card title={t('SLA breaches')}>
             {!data.slaBreaches.length ? <Empty>{t('No open breaches')}</Empty> : <ul className="divide-y text-sm">{data.slaBreaches.map((b) => <li key={b.id} className="py-1.5"><Link className="font-medium hover:underline" href={`/matters/${b.matter.id}`}>{b.matter.reference}</Link> {b.matter.title}<div className="text-xs text-red-700">{b.policy} · {t('breached')} {fmtDateTime(b.breachedAt)}{b.escalationLevel > 1 ? ` · ${t('escalated to HoD')}` : ''}</div></li>)}</ul>}
           </Card>
           <Card title={t('Average turnaround (business days)')}>
-            <table className="w-full text-sm"><thead><tr className="text-left text-xs text-slate-500"><th>{t('Unit')}</th><th>{t('Closed')}</th><th>{t('Average')}</th></tr></thead><tbody>{data.turnaround.filter((x) => units.includes(x.unit as 'LIT')).map((x) => <tr key={x.unit}><td>{UNIT_NAMES[x.unit as 'LIT']}</td><td>{x.closed}</td><td>{x.avgBusinessDays ?? '—'}</td></tr>)}</tbody></table>
-          </Card>
-          <Card title={t('Workload per lawyer (open assignments)')}>
-            {!data.workload.length ? <Empty>{t('No open assignments')}</Empty> : <ul className="space-y-1 text-sm">{data.workload.map((w) => <li key={w.userId} className="flex items-center gap-2"><span className="w-40 truncate">{w.name}</span><span className="h-2 rounded bg-brand-500" aria-hidden><span className={`block h-2 ${['w-2', 'w-4', 'w-8', 'w-12', 'w-16', 'w-24', 'w-32', 'w-40'][Math.min(7, w.open)]}`} /></span><span className="font-semibold">{w.open}</span></li>)}</ul>}
+            <table className="w-full text-sm"><thead><tr className="text-start text-xs text-slate-500"><th>{t('Unit')}</th><th>{t('Closed')}</th><th>{t('Average')}</th></tr></thead><tbody>{data.turnaround.filter((x) => units.includes(x.unit as 'LIT')).map((x) => <tr key={x.unit}><td>{UNIT_NAMES[x.unit as 'LIT']}</td><td>{x.closed}</td><td>{x.avgBusinessDays ?? '—'}</td></tr>)}</tbody></table>
           </Card>
           <Card title={t('Upcoming hearings and deadlines')}>
             {!data.upcoming.length ? <Empty>{t('Nothing in the next 30 days')}</Empty> : <ul className="divide-y text-sm">{data.upcoming.map((e) => <li key={e.id} className="py-1.5"><span className="text-xs text-slate-500">{fmtDate(e.startsAt)} · {label(e.kind)}</span><div>{e.matterId ? <Link className="hover:underline" href={`/matters/${e.matterId}`}>{e.title}</Link> : e.title}</div></li>)}</ul>}
           </Card>
           <Card title={t('Litigation exposure (open cases)')}>
-            {!Object.keys(data.exposure).length ? <Empty>{t('No open cases')}</Empty> : <table className="w-full text-sm"><thead><tr className="text-left text-xs text-slate-500"><th>{t('Currency')}</th><th>{t('Risk')}</th><th>{t('Cases')}</th><th className="text-right">{t('Exposure')}</th></tr></thead><tbody>{Object.entries(data.exposure).flatMap(([c, r]) => Object.entries(r).map(([risk, v]) => <tr key={c + risk}><td>{c}</td><td>{label(risk)}</td><td>{v.count}</td><td className="text-right font-semibold">{v.exposure.toLocaleString('en-US')}</td></tr>))}</tbody></table>}
+            {!Object.keys(data.exposure).length ? <Empty>{t('No open cases')}</Empty> : <table className="w-full text-sm"><thead><tr className="text-start text-xs text-slate-500"><th>{t('Currency')}</th><th>{t('Risk')}</th><th>{t('Cases')}</th><th className="text-end">{t('Exposure')}</th></tr></thead><tbody>{Object.entries(data.exposure).flatMap(([c, r]) => Object.entries(r).map(([risk, v]) => <tr key={c + risk}><td>{c}</td><td>{label(risk)}</td><td>{v.count}</td><td className="text-end font-semibold">{v.exposure.toLocaleString('en-US')}</td></tr>))}</tbody></table>}
           </Card>
         </div>
+        <Workload unit={f.unit} />
         {data.complianceHeat.length ? <Card title={t('Compliance heat map')}><HeatMap cells={data.complianceHeat} /></Card> : null}
       </> : null}
     </div>
+  );
+}
+
+interface WorkRow { userId: string; name: string; roles: string[]; open: number; reviewing: number; hearings7d: number; overdue: number; breaches: number; research: number; closed30d: number; load: number }
+
+/** Workload per lawyer: who has how much, so the HoD / Unit Head can balance assignments. */
+function Workload({ unit }: { unit: string }) {
+  const { data, error } = useApi<{ people: WorkRow[] }>(`/dashboard/workload${unit ? `?unit=${unit}` : ''}`, [unit]);
+  const max = Math.max(1, ...(data?.people ?? []).map((p) => p.load));
+  const cols: [keyof WorkRow, string, string][] = [
+    ['open', t('Open matters'), t('Matters assigned to them that are still open')], ['reviewing', t('To review'), t('Open matters waiting on them as reviewer or approver')],
+    ['hearings7d', t('Hearings (7 days)'), t('Their hearings in the next 7 days')], ['overdue', t('Overdue deadlines'), t('Open deadlines past their due date')],
+    ['breaches', t('SLA breaches'), t('Their matters with a breached SLA')], ['research', t('Law research'), t('Open law research tasks')], ['closed30d', t('Closed (30 days)'), t('Matters they closed in the last 30 days')],
+  ];
+  return (
+    <Card title={t('Workload per lawyer')}>
+      {error ? <Alert>{error.message}</Alert> : !data ? null : !data.people.length ? <Empty>{t('No legal staff in this unit')}</Empty> : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm" data-testid="workload">
+            <thead><tr className="text-start text-xs text-slate-500"><th className="py-1 pe-2">{t('Name')}</th>{cols.map(([k, l, help]) => <th key={k} className="px-2 py-1 text-end" title={help}>{l}</th>)}<th className="px-2 py-1">{t('Load')}</th></tr></thead>
+            <tbody className="divide-y">{data.people.map((p) => (
+              <tr key={p.userId}>
+                <td className="py-1.5 pe-2"><div className="font-medium">{p.name}</div><div className="text-xs text-slate-500">{p.roles.join(', ')}</div></td>
+                {cols.map(([k]) => <td key={k} className={`px-2 py-1.5 text-end ${(k === 'overdue' || k === 'breaches') && Number(p[k]) > 0 ? 'font-semibold text-red-700' : ''}`}>{p[k] as number}</td>)}
+                <td className="px-2 py-1.5"><meter className="w-24" min={0} max={max} value={p.load} aria-label={t('Load {n}', { n: p.load })} /></td>
+              </tr>
+            ))}</tbody>
+          </table>
+          <p className="mt-2 text-xs text-slate-500">{t('Load = open + to review + hearings + research, with overdue deadlines and SLA breaches counted twice. Use it to balance new assignments.')}</p>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -115,7 +145,7 @@ function ManagementDashboard() {
         <Stat label={t('Awareness coverage')} value={data.awareness.percent === null ? '—' : `${data.awareness.percent}%`} />
       </div>
       <Card title={t('Litigation exposure by risk')}>
-        <table className="w-full text-sm"><tbody>{Object.entries(data.litigationExposure).flatMap(([c, r]) => Object.entries(r).map(([risk, v]) => <tr key={c + risk}><td>{c}</td><td>{label(risk)}</td><td className="text-right font-semibold">{v.toLocaleString('en-US')}</td></tr>))}</tbody></table>
+        <table className="w-full text-sm"><tbody>{Object.entries(data.litigationExposure).flatMap(([c, r]) => Object.entries(r).map(([risk, v]) => <tr key={c + risk}><td>{c}</td><td>{label(risk)}</td><td className="text-end font-semibold">{v.toLocaleString('en-US')}</td></tr>))}</tbody></table>
       </Card>
     </div>
   );

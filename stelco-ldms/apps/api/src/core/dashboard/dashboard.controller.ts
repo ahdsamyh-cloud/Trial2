@@ -17,6 +17,12 @@ export class DashboardController {
     return this.dash.overview(parse(filter, q));
   }
 
+  @Get('workload')
+  @Can('dashboard:hod', 'dashboard:unit')
+  workload(@Query() q: unknown) {
+    return this.dash.workload(parse(filter.pick({ unit: true }), q).unit);
+  }
+
   @Get('management')
   @Can('dashboard:mgmt')
   management(@Query() q: unknown) {

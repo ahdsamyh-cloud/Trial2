@@ -90,8 +90,27 @@ export class DraftingController {
   // ------------------------------------------------------------------ library
   @Get('templates')
   @Can('matter:read')
-  templates(@Query('q') q?: unknown) {
-    return this.reg.templates(qs(q, 100));
+  templates(@Query('q') q?: unknown, @Query('kind') kind?: unknown) {
+    return this.reg.templates(qs(q, 100), qs(kind, 20));
+  }
+
+  @Get('templates/:id/versions')
+  @Can('matter:read')
+  templateVersions(@Param('id') tid: string) {
+    return this.reg.libraryVersions('TEMPLATE', tid);
+  }
+
+  @Get('clauses/:id/versions')
+  @Can('matter:read')
+  clauseVersions(@Param('id') cid: string) {
+    return this.reg.libraryVersions('CLAUSE', cid);
+  }
+
+  /** Copy an approved template's file(s) into a drafting request as its starting document. */
+  @Post('requests/:id/from-template')
+  @Can('doc:write')
+  fromTemplate(@Param('id') rid: string, @Body() body: unknown) {
+    return this.reg.useTemplate(rid, parse(z.object({ templateId: id }).strict(), body).templateId);
   }
 
   @Post('templates')
@@ -106,13 +125,19 @@ export class DraftingController {
     return this.reg.saveTemplate(tid, parse(this.templateSchema, body));
   }
 
-  private readonly templateSchema = z.object({ name: z.string().trim().min(2).max(200), category: z.string().trim().min(2).max(100), body: z.string().max(100000).nullish(), documentId: id.nullish(), status: z.enum(['DRAFT', 'APPROVED', 'RETIRED']).optional() }).strict();
-  private readonly clauseSchema = z.object({ title: z.string().trim().min(2).max(200), body: z.string().trim().min(2).max(50000), tags, status: z.enum(['DRAFT', 'APPROVED', 'RETIRED']).optional() }).strict();
+  private readonly templateSchema = z.object({
+    name: z.string().trim().min(2).max(200), kind: z.enum(['CONTRACT', 'LETTER', 'OPINION', 'POLICY', 'NOTICE', 'OTHER']).optional(), category: z.string().trim().min(2).max(100),
+    body: z.string().max(100000).nullish(), guidance: z.string().max(10000).nullish(), status: z.enum(['DRAFT', 'APPROVED', 'RETIRED']).optional(), note: z.string().max(1000).nullish(),
+  }).strict();
+  private readonly clauseSchema = z.object({
+    title: z.string().trim().min(2).max(200), category: z.string().trim().max(100).nullish(), body: z.string().trim().min(2).max(50000), guidance: z.string().max(10000).nullish(), tags,
+    status: z.enum(['DRAFT', 'APPROVED', 'RETIRED']).optional(), note: z.string().max(1000).nullish(),
+  }).strict();
 
   @Get('clauses')
   @Can('matter:read')
-  clauses(@Query('q') q?: unknown, @Query('tag') tag?: unknown) {
-    return this.reg.clauses(qs(q, 100), qs(tag, 40));
+  clauses(@Query('q') q?: unknown, @Query('tag') tag?: unknown, @Query('category') category?: unknown) {
+    return this.reg.clauses(qs(q, 100), qs(tag, 40), qs(category, 100));
   }
 
   @Post('clauses')

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { PDFDocument, PDFFont, PDFPage, rgb, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFFont, PDFPage, rgb } from 'pdf-lib';
+import { drawLine, embedReportFonts, latinSafe } from './pdf-text';
 import { Prisma, Unit } from '@prisma/client';
 import { UNIT_NAMES, UNITS } from '@ldms/shared';
 import { CryptoService } from '../../common/crypto.service';
@@ -127,13 +128,16 @@ export class ReportsService {
 
   async pdf(r: ManagementReport): Promise<Buffer> {
     const doc = await PDFDocument.create();
-    doc.setTitle(`${r.title} ${r.period}`);
+    doc.setTitle(latinSafe(`${r.title} ${r.period}`));
     doc.setProducer('STELCO LDMS');
-    const font = await doc.embedFont(StandardFonts.Helvetica);
-    const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+    const fonts = await embedReportFonts(doc);
+    const font = fonts.regular;
+    const bold = fonts.bold;
     let page = doc.addPage([595, 842]);
     let y = 790;
-    const text = (p: PDFPage, s: string, x: number, yy: number, size: number, f: PDFFont, color = rgb(0.1, 0.1, 0.1)) => p.drawText(s.replace(/[^\x20-\x7E]/g, '-'), { x, y: yy, size, font: f, color });
+    // Mixed English/Dhivehi text (department names, titles): Thaana is laid out right to left with its own font.
+    const text = (p: PDFPage, s: string, x: number, yy: number, size: number, f: PDFFont, color = rgb(0.1, 0.1, 0.1), align: 'left' | 'right' = 'left') =>
+      drawLine(p, s, { x, y: yy, size, font: f, fonts, color, align });
     text(page, 'STELCO — Legal Department', 50, y, 10, font, rgb(0.07, 0.29, 0.56));
     y -= 22;
     text(page, r.title, 50, y, 16, bold);
@@ -148,8 +152,7 @@ export class ReportsService {
       for (const [k, v] of s.rows) {
         if (y < 60) { page = doc.addPage([595, 842]); y = 790; }
         text(page, k.slice(0, 80), 55, y, 9.5, font);
-        const val = String(v);
-        text(page, val, 545 - font.widthOfTextAtSize(val, 9.5), y, 9.5, bold);
+        text(page, String(v), 545, y, 9.5, bold, rgb(0.1, 0.1, 0.1), 'right');
         page.drawLine({ start: { x: 50, y: y - 4 }, end: { x: 545, y: y - 4 }, thickness: 0.3, color: rgb(0.85, 0.85, 0.85) });
         y -= 16;
       }

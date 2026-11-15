@@ -109,7 +109,7 @@ function Circulars() {
       {act.error ? <Alert>{act.error}</Alert> : null}
       {!data?.length ? <Empty>{t('No circulars sent')}</Empty> : <ul className="divide-y text-sm">{data.map((d) => (
         <li key={d.id} className="py-2">
-          <button className="flex w-full flex-wrap items-center justify-between gap-2 text-left" onClick={() => setOpen(open === d.id ? null : d.id)} aria-expanded={open === d.id}>
+          <button className="flex w-full flex-wrap items-center justify-between gap-2 text-start" onClick={() => setOpen(open === d.id ? null : d.id)} aria-expanded={open === d.id}>
             <span className="font-medium">{d.subject}</span>
             <span className="text-xs">{fmtDate(d.sentAt)} · {t('due')} {fmtDate(d.dueAt)} <Badge tone={d.acknowledged === d.total ? 'green' : 'amber'}>{d.acknowledged}/{d.total} {t('acknowledged')}</Badge></span>
           </button>
@@ -179,11 +179,11 @@ function DeptReport() {
       {act.error ? <Alert>{act.error}</Alert> : null}
       {!data?.summary.length ? <Empty>{t('No obligations issued to departments for this year')}</Empty> : (
         <div className="overflow-x-auto"><table className="w-full text-sm">
-          <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2 pr-2">{t('Department')}</th><th className="pr-2">{t('Obligations')}</th><th className="pr-2">{t('Yes')}</th><th className="pr-2">{t('No')}</th><th className="pr-2">{t('Not answered')}</th><th className="pr-2">{t('Confirmed')}</th><th className="pr-2">{t('Circulars ack.')}</th><th>{t('Reminders')}</th></tr></thead>
+          <thead><tr className="border-b text-start text-xs text-slate-500"><th className="py-2 pe-2">{t('Department')}</th><th className="pe-2">{t('Obligations')}</th><th className="pe-2">{t('Yes')}</th><th className="pe-2">{t('No')}</th><th className="pe-2">{t('Not answered')}</th><th className="pe-2">{t('Confirmed')}</th><th className="pe-2">{t('Circulars ack.')}</th><th>{t('Reminders')}</th></tr></thead>
           <tbody>{data.summary.map((r) => (
             <tr key={r.id} className="border-b last:border-0">
-              <td className="py-2 pr-2 font-medium">{r.department}</td><td className="pr-2">{r.obligations}</td><td className="pr-2 text-green-700">{r.yes}</td><td className="pr-2 text-red-700">{r.no}</td>
-              <td className="pr-2 text-amber-700">{r.unanswered}</td><td className="pr-2">{r.confirmedPct === null ? '—' : `${r.confirmedPct}%`}</td><td className="pr-2">{r.acknowledged}/{r.circulars}</td><td>{r.remindersSent}</td>
+              <td className="py-2 pe-2 font-medium">{r.department}</td><td className="pe-2">{r.obligations}</td><td className="pe-2 text-green-700">{r.yes}</td><td className="pe-2 text-red-700">{r.no}</td>
+              <td className="pe-2 text-amber-700">{r.unanswered}</td><td className="pe-2">{r.confirmedPct === null ? '—' : `${r.confirmedPct}%`}</td><td className="pe-2">{r.acknowledged}/{r.circulars}</td><td>{r.remindersSent}</td>
             </tr>
           ))}</tbody>
         </table></div>

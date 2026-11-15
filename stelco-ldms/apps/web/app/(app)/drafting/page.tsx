@@ -187,50 +187,118 @@ function Opinions() {
   );
 }
 
+interface Tpl { id: string; name: string; kind: string; category: string; status: string; body: string | null; guidance: string | null; version: number; approvedAt: string | null; updatedAt: string; documents: { id: string; title: string }[] }
+interface Cl { id: string; title: string; category: string | null; body: string; guidance: string | null; tags: string[]; status: string; version: number; approvedAt: string | null }
+interface LibVersion { id: string; version: number; snapshot: Record<string, unknown>; changedBy: string | null; note: string | null; createdAt: string }
+const TEMPLATE_KINDS = ['CONTRACT', 'LETTER', 'OPINION', 'POLICY', 'NOTICE', 'OTHER'];
+
+/**
+ * Template & clause library: approved standard wording drafters start from. Only the Drafting Unit Head /
+ * HoD approve; a change to approved wording by anyone else sends it back to draft. Earlier wordings are kept.
+ */
 function Library() {
   const { can, me } = useAuth();
-  const templates = useApi<{ id: string; name: string; category: string; status: string; body: string | null }[]>('/drafting/templates');
-  const clauses = useApi<{ id: string; title: string; body: string; tags: string[]; status: string }[]>('/drafting/clauses');
-  const [tpl, setTpl] = useState<{ id?: string; name: string; category: string; body: string; status: string } | null>(null);
-  const [cl, setCl] = useState<{ id?: string; title: string; body: string; tags: string; status: string } | null>(null);
+  const [q, setQ] = useState('');
+  const [kind, setKind] = useState('');
+  const query = new URLSearchParams(Object.entries({ q, kind }).filter(([, v]) => v)).toString();
+  const templates = useApi<Tpl[]>(`/drafting/templates?${query}`, [query]);
+  const clauses = useApi<Cl[]>(`/drafting/clauses${q ? `?q=${encodeURIComponent(q)}` : ''}`, [q]);
+  const [tpl, setTpl] = useState<{ id?: string; name: string; kind: string; category: string; body: string; guidance: string; status: string; note: string } | null>(null);
+  const [cl, setCl] = useState<{ id?: string; title: string; category: string; body: string; guidance: string; tags: string; status: string; note: string } | null>(null);
+  const [view, setView] = useState<Tpl | null>(null);
+  const [history, setHistory] = useState<{ type: 'templates' | 'clauses'; id: string; title: string } | null>(null);
   const [copied, setCopied] = useState('');
   const act = useAction();
   const lib = can('draft:library', 'DRF');
   const approver = !!me?.roles.some((r) => r.role === 'HOD' || (r.role === 'UNIT_HEAD' && r.unit === 'DRF'));
-  const statusOptions = (approver ? ['DRAFT', 'APPROVED', 'RETIRED'] : ['DRAFT']).map((s) => ({ value: s, label: label(s) }));
+  const statusOptions = (approver ? ['DRAFT', 'APPROVED', 'RETIRED'] : ['DRAFT']).map((x) => ({ value: x, label: label(x) }));
+  const copy = async (key: string, text: string) => { await navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(''), 1500); };
+  const ver = (v: number, approvedAt: string | null) => <span className="text-xs text-slate-500">v{v}{approvedAt ? ` · ${t('approved {d}', { d: fmtDate(approvedAt) })}` : ''}</span>;
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Card title={t('Templates')} actions={lib ? <Button size="sm" onClick={() => setTpl({ name: '', category: '', body: '', status: 'DRAFT' })}>{t('Add')}</Button> : null}>
-        {act.error ? <Alert>{act.error}</Alert> : null}
-        <ul className="divide-y text-sm">{templates.data?.map((x) => <li key={x.id} className="flex items-center justify-between gap-2 py-2"><span>{x.name} <span className="text-xs text-slate-500">· {x.category}</span></span><span className="flex items-center gap-1"><StatusBadge value={x.status} />{lib ? <Button size="sm" variant="ghost" onClick={() => setTpl({ id: x.id, name: x.name, category: x.category, body: x.body ?? '', status: x.status })}>{t('Edit')}</Button> : null}</span></li>)}</ul>
-        <div className="mt-3"><DocumentsPanel ownerType="library" ownerId="TEMPLATE" canWrite={lib} title={t('Template files (Word)')} /></div>
-      </Card>
-      <Card title={t('Standard clauses')} actions={lib ? <Button size="sm" onClick={() => setCl({ title: '', body: '', tags: '', status: 'DRAFT' })}>{t('Add')}</Button> : null}>
-        <ul className="space-y-2 text-sm">{clauses.data?.map((c) => (
-          <li key={c.id} className="rounded border p-2">
-            <div className="flex items-center justify-between gap-2"><span className="font-medium">{c.title}</span><span className="flex items-center gap-1"><StatusBadge value={c.status} />
-              <Button size="sm" variant="ghost" onClick={async () => { await navigator.clipboard.writeText(c.body); setCopied(c.id); setTimeout(() => setCopied(''), 1500); }}>{copied === c.id ? t('Copied') : t('Copy')}</Button>
-              {lib ? <Button size="sm" variant="ghost" onClick={() => setCl({ id: c.id, title: c.title, body: c.body, tags: c.tags.join(', '), status: c.status })}>{t('Edit')}</Button> : null}</span></div>
-            <p className="mt-1 whitespace-pre-wrap text-slate-700">{c.body}</p>
-          </li>
-        ))}</ul>
-      </Card>
-      <Modal open={!!tpl} wide title={t('Template')} onClose={() => setTpl(null)} footer={<Button busy={act.busy} onClick={() => act.run(async () => { const b = { name: tpl!.name, category: tpl!.category, body: tpl!.body || null, status: tpl!.status }; if (tpl!.id) await api.patch(`/drafting/templates/${tpl!.id}`, b); else await api.post('/drafting/templates', b); setTpl(null); await templates.reload(); })}>{t('Save')}</Button>}>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end gap-2">
+        <Field label={t('Search the library')}>{(id) => <Input id={id} className="w-64" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('Name, category or words in the text')} />}</Field>
+        <Field label={t('Template type')}>{(id) => <Select id={id} value={kind} onChange={(e) => setKind(e.target.value)} placeholder={t('All types')} options={TEMPLATE_KINDS.map((k) => ({ value: k, label: label(k) }))} />}</Field>
+        {!lib ? <p className="text-xs text-slate-500">{t('Only approved items are shown.')}</p> : null}
+      </div>
+      {act.error ? <Alert>{act.error}</Alert> : null}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card title={t('Templates')} actions={lib ? <Button size="sm" onClick={() => setTpl({ name: '', kind: 'CONTRACT', category: '', body: '', guidance: '', status: 'DRAFT', note: '' })}>{t('Add')}</Button> : null}>
+          {!templates.data?.length ? <Empty>{t('No templates')}</Empty> : <ul className="divide-y text-sm" data-testid="templates">{templates.data.map((x) => (
+            <li key={x.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <span><button type="button" className="font-medium text-brand-700 hover:underline" onClick={() => setView(x)}>{x.name}</button> <Badge>{label(x.kind)}</Badge> <span className="text-xs text-slate-500">{x.category}</span><br />{ver(x.version, x.approvedAt)}{x.documents.length ? <span className="text-xs text-slate-500"> · {t('{n} file(s)', { n: x.documents.length })}</span> : null}</span>
+              <span className="flex items-center gap-1"><StatusBadge value={x.status} />
+                {lib ? <Button size="sm" variant="ghost" onClick={() => setTpl({ id: x.id, name: x.name, kind: x.kind, category: x.category, body: x.body ?? '', guidance: x.guidance ?? '', status: x.status, note: '' })}>{t('Edit')}</Button> : null}</span>
+            </li>
+          ))}</ul>}
+        </Card>
+        <Card title={t('Standard clauses')} actions={lib ? <Button size="sm" onClick={() => setCl({ title: '', category: '', body: '', guidance: '', tags: '', status: 'DRAFT', note: '' })}>{t('Add')}</Button> : null}>
+          {!clauses.data?.length ? <Empty>{t('No clauses')}</Empty> : <ul className="space-y-2 text-sm">{clauses.data.map((c) => (
+            <li key={c.id} className="rounded border p-2">
+              <div className="flex flex-wrap items-center justify-between gap-2"><span><span className="font-medium">{c.title}</span> {c.category ? <span className="text-xs text-slate-500">· {c.category}</span> : null} {ver(c.version, c.approvedAt)}</span><span className="flex items-center gap-1"><StatusBadge value={c.status} />
+                <Button size="sm" variant="ghost" onClick={() => void copy(c.id, c.body)}>{copied === c.id ? t('Copied') : t('Copy')}</Button>
+                <Button size="sm" variant="ghost" onClick={() => setHistory({ type: 'clauses', id: c.id, title: c.title })}>{t('Earlier versions')}</Button>
+                {lib ? <Button size="sm" variant="ghost" onClick={() => setCl({ id: c.id, title: c.title, category: c.category ?? '', body: c.body, guidance: c.guidance ?? '', tags: c.tags.join(', '), status: c.status, note: '' })}>{t('Edit')}</Button> : null}</span></div>
+              {c.guidance ? <p className="mt-1 text-xs text-slate-500">{t('When to use')}: {c.guidance}</p> : null}
+              <p className="mt-1 whitespace-pre-wrap text-slate-700">{c.body}</p>
+            </li>
+          ))}</ul>}
+        </Card>
+      </div>
+      {lib ? <details className="rounded border bg-white p-3 text-sm"><summary className="cursor-pointer">{t('General template files (older uploads)')}</summary><div className="mt-2"><DocumentsPanel ownerType="library" ownerId="TEMPLATE" canWrite={lib} title={t('Template files (Word)')} /></div></details> : null}
+
+      <Modal open={!!view} wide title={view?.name ?? ''} onClose={() => setView(null)}>
+        {view ? <div className="space-y-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2"><Badge>{label(view.kind)}</Badge><span>{view.category}</span><StatusBadge value={view.status} />{ver(view.version, view.approvedAt)}</div>
+          {view.guidance ? <p><span className="font-medium">{t('When to use')}:</span> {view.guidance}</p> : null}
+          {view.body ? <div><div className="mb-1 flex items-center justify-between"><span className="font-medium">{t('Text')}</span><Button size="sm" variant="ghost" onClick={() => void copy(`t${view.id}`, view.body!)}>{copied === `t${view.id}` ? t('Copied') : t('Copy')}</Button></div><p className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded bg-slate-50 p-2">{view.body}</p></div> : null}
+          <DocumentsPanel ownerType="template" ownerId={view.id} canWrite={lib} title={t('Template files (Word / PDF)')} />
+          <Button size="sm" variant="secondary" onClick={() => setHistory({ type: 'templates', id: view.id, title: view.name })}>{t('Earlier versions')}</Button>
+          <p className="text-xs text-slate-500">{t('To start a draft from this template, open the drafting request and use "Start from a template".')}</p>
+        </div> : null}
+      </Modal>
+      <LibraryHistory item={history} onClose={() => setHistory(null)} />
+
+      <Modal open={!!tpl} wide title={t('Template')} onClose={() => setTpl(null)} footer={<Button busy={act.busy} onClick={() => act.run(async () => { const b = { name: tpl!.name, kind: tpl!.kind, category: tpl!.category, body: tpl!.body || null, guidance: tpl!.guidance || null, status: tpl!.status, note: tpl!.note || null }; if (tpl!.id) await api.patch(`/drafting/templates/${tpl!.id}`, b); else await api.post('/drafting/templates', b); setTpl(null); await templates.reload(); })}>{t('Save')}</Button>}>
         {tpl ? <>
-          <Field label={t('Name')}>{(id) => <Input id={id} value={tpl.name} onChange={(e) => setTpl({ ...tpl, name: e.target.value })} />}</Field>
-          <Field label={t('Category')}>{(id) => <Input id={id} value={tpl.category} onChange={(e) => setTpl({ ...tpl, category: e.target.value })} />}</Field>
-          <Field label={t('Text')}>{(id) => <Textarea id={id} rows={10} value={tpl.body} onChange={(e) => setTpl({ ...tpl, body: e.target.value })} />}</Field>
-          <Field label={t('Status')}>{(id) => <Select id={id} value={tpl.status} onChange={(e) => setTpl({ ...tpl, status: e.target.value })} options={statusOptions} />}</Field>
+          {act.error ? <Alert>{act.error}</Alert> : null}
+          <Field label={t('Name')} required>{(id) => <Input id={id} value={tpl.name} onChange={(e) => setTpl({ ...tpl, name: e.target.value })} />}</Field>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Field label={t('Type')}>{(id) => <Select id={id} value={tpl.kind} onChange={(e) => setTpl({ ...tpl, kind: e.target.value })} options={TEMPLATE_KINDS.map((k) => ({ value: k, label: label(k) }))} />}</Field>
+            <Field label={t('Category')} required>{(id) => <Input id={id} value={tpl.category} onChange={(e) => setTpl({ ...tpl, category: e.target.value })} placeholder={t('e.g. Procurement, Employment, Confidentiality')} />}</Field>
+          </div>
+          <Field label={t('When to use (guidance for drafters)')}>{(id) => <Textarea id={id} rows={2} value={tpl.guidance} onChange={(e) => setTpl({ ...tpl, guidance: e.target.value })} />}</Field>
+          <Field label={t('Text')} hint={t('Optional: the wording itself. Attach the Word file after saving (open the template).')}>{(id) => <Textarea id={id} rows={10} value={tpl.body} onChange={(e) => setTpl({ ...tpl, body: e.target.value })} />}</Field>
+          <Field label={t('Status')} hint={!approver ? t('Only the Drafting Unit Head or HoD can approve. Changing approved wording sends it back to draft.') : undefined}>{(id) => <Select id={id} value={tpl.status} onChange={(e) => setTpl({ ...tpl, status: e.target.value })} options={tpl.status === 'APPROVED' && !approver ? [{ value: 'APPROVED', label: label('APPROVED') }, ...statusOptions] : statusOptions} />}</Field>
+          {tpl.id ? <Field label={t('What changed (kept with the old version)')}>{(id) => <Input id={id} value={tpl.note} onChange={(e) => setTpl({ ...tpl, note: e.target.value })} />}</Field> : null}
         </> : null}
       </Modal>
-      <Modal open={!!cl} wide title={t('Clause')} onClose={() => setCl(null)} footer={<Button busy={act.busy} onClick={() => act.run(async () => { const b = { title: cl!.title, body: cl!.body, tags: cl!.tags.split(',').map((s) => s.trim()).filter(Boolean), status: cl!.status }; if (cl!.id) await api.patch(`/drafting/clauses/${cl!.id}`, b); else await api.post('/drafting/clauses', b); setCl(null); await clauses.reload(); })}>{t('Save')}</Button>}>
+      <Modal open={!!cl} wide title={t('Clause')} onClose={() => setCl(null)} footer={<Button busy={act.busy} onClick={() => act.run(async () => { const b = { title: cl!.title, category: cl!.category || null, body: cl!.body, guidance: cl!.guidance || null, tags: cl!.tags.split(',').map((x) => x.trim()).filter(Boolean), status: cl!.status, note: cl!.note || null }; if (cl!.id) await api.patch(`/drafting/clauses/${cl!.id}`, b); else await api.post('/drafting/clauses', b); setCl(null); await clauses.reload(); })}>{t('Save')}</Button>}>
         {cl ? <>
-          <Field label={t('Title')}>{(id) => <Input id={id} value={cl.title} onChange={(e) => setCl({ ...cl, title: e.target.value })} />}</Field>
-          <Field label={t('Clause text')}>{(id) => <Textarea id={id} rows={8} value={cl.body} onChange={(e) => setCl({ ...cl, body: e.target.value })} />}</Field>
+          {act.error ? <Alert>{act.error}</Alert> : null}
+          <Field label={t('Title')} required>{(id) => <Input id={id} value={cl.title} onChange={(e) => setCl({ ...cl, title: e.target.value })} />}</Field>
+          <Field label={t('Category')}>{(id) => <Input id={id} value={cl.category} onChange={(e) => setCl({ ...cl, category: e.target.value })} />}</Field>
+          <Field label={t('Clause text')} required>{(id) => <Textarea id={id} rows={8} value={cl.body} onChange={(e) => setCl({ ...cl, body: e.target.value })} />}</Field>
+          <Field label={t('When to use (guidance for drafters)')}>{(id) => <Textarea id={id} rows={2} value={cl.guidance} onChange={(e) => setCl({ ...cl, guidance: e.target.value })} />}</Field>
           <Field label={t('Tags')}>{(id) => <Input id={id} value={cl.tags} onChange={(e) => setCl({ ...cl, tags: e.target.value })} />}</Field>
-          <Field label={t('Status')}>{(id) => <Select id={id} value={cl.status} onChange={(e) => setCl({ ...cl, status: e.target.value })} options={statusOptions} />}</Field>
+          <Field label={t('Status')}>{(id) => <Select id={id} value={cl.status} onChange={(e) => setCl({ ...cl, status: e.target.value })} options={cl.status === 'APPROVED' && !approver ? [{ value: 'APPROVED', label: label('APPROVED') }, ...statusOptions] : statusOptions} />}</Field>
+          {cl.id ? <Field label={t('What changed (kept with the old version)')}>{(id) => <Input id={id} value={cl.note} onChange={(e) => setCl({ ...cl, note: e.target.value })} />}</Field> : null}
         </> : null}
       </Modal>
     </div>
+  );
+}
+
+function LibraryHistory({ item, onClose }: { item: { type: 'templates' | 'clauses'; id: string; title: string } | null; onClose: () => void }) {
+  const { data } = useApi<LibVersion[]>(item ? `/drafting/${item.type}/${item.id}/versions` : null, [item?.id]);
+  return (
+    <Modal open={!!item} wide title={t('Earlier versions: {x}', { x: item?.title ?? '' })} onClose={onClose}>
+      {!data ? null : !data.length ? <Empty>{t('No earlier versions: this is the first wording.')}</Empty> : <ul className="space-y-2 text-sm">{data.map((v) => (
+        <li key={v.id} className="rounded border p-2">
+          <div className="text-xs text-slate-500">v{v.version} · {t('replaced {d}', { d: fmtDate(v.createdAt) })}{v.changedBy ? ` ${t('by {u}', { u: v.changedBy })}` : ''} · {label(String(v.snapshot.status ?? ''))}{v.note ? ` · ${v.note}` : ''}</div>
+          <p className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap">{String(v.snapshot.body ?? '') || '—'}</p>
+        </li>
+      ))}</ul>}
+    </Modal>
   );
 }

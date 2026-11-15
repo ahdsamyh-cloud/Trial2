@@ -46,6 +46,31 @@ export class ConfigController {
     return { key, value };
   }
 
+  /** Dhivehi wording of the screens, as corrected in the app (it overrides the built-in draft translation). */
+  @Get('i18n/dv')
+  @Authenticated()
+  async dhivehi() {
+    return this.settings.get<Record<string, string>>('i18n.dv');
+  }
+
+  /** HoD or IT admin: save corrected Dhivehi wording (English text -> Dhivehi text). Empty values are dropped. */
+  @Put('i18n/dv')
+  @Authenticated()
+  async setDhivehi(@Body() body: unknown) {
+    const u = currentUser();
+    if (!u.isHod && !u.perms.has('config:manage')) throw forbidden('Only the HoD or the IT administrator can change the Dhivehi wording');
+    const { translations } = parse(z.object({ translations: z.record(z.string().max(500), z.string().max(2000)) }).strict(), body);
+    const entries = Object.entries(translations).map(([k, v]) => [k, v.trim()] as const).filter(([, v]) => v);
+    if (entries.length > 5000) throw badRequest('Too many entries');
+    const value = Object.fromEntries(entries);
+    const before = await this.settings.get<Record<string, string>>('i18n.dv');
+    await this.prisma.base.systemSetting.upsert({ where: { key: 'i18n.dv' }, create: { key: 'i18n.dv', value }, update: { value } });
+    this.settings.invalidate();
+    const changed = entries.filter(([k, v]) => before[k] !== v).length + Object.keys(before).filter((k) => !(k in value)).length;
+    await this.audit.log({ action: 'config.translations', entityType: 'SystemSetting', entityId: 'i18n.dv', meta: { entries: entries.length, changed } });
+    return { saved: entries.length };
+  }
+
   @Get(':entity')
   @Authenticated()
   async list(@Param('entity') name: string, @Query('q') qRaw?: unknown) {

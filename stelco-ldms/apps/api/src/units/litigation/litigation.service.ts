@@ -1,6 +1,6 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Prisma, RiskRating } from '@prisma/client';
-import { addBusinessDays, canMove, LITIGATION_OPEN, LITIGATION_TRANSITIONS, LitigationStatus } from '@ldms/shared';
+import { addBusinessDays, addCalendarDays, canMove, isBusinessDayNumber, LITIGATION_OPEN, LITIGATION_TRANSITIONS, LitigationStatus, localDayNumber, startOfLocalDay } from '@ldms/shared';
 import { CryptoService } from '../../common/crypto.service';
 import { currentUser } from '../../common/context';
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors';
@@ -46,6 +46,11 @@ export interface CaseInput {
   importBatchId?: string | null;
 }
 
+export interface OutcomeInput {
+  kind: string; decidedOn: Date; amount?: string | null; currency?: string; direction: string; paymentStatus?: string; terms?: string | null;
+  appealDays?: number | null; appealDayKind?: 'CALENDAR' | 'BUSINESS' | null; appealFrom?: Date | null; appealDecision?: 'UNDECIDED' | 'APPEAL' | 'NO_APPEAL' | null; complyBy?: Date | null;
+}
+
 @Injectable()
 export class LitigationService implements OnModuleInit {
   constructor(
@@ -65,6 +70,8 @@ export class LitigationService implements OnModuleInit {
 
   onModuleInit() {
     this.jobs.register('lit.no-update', () => this.flagStale());
+    this.jobs.register('lit.hearing-reminders', () => this.hearingReminders());
+    this.jobs.register('lit.hearing-digest', () => this.hearingDigest());
     this.intake.registerConverter('LIT', (tx, i, input) => this.createInTx(tx, {
       title: input.title ?? i.subject, description: i.summary, caseType: String(input.extra?.caseType ?? 'CIVIL'), ourRole: String(input.extra?.ourRole ?? 'DEFENDANT'),
       requestingDeptId: i.senderDeptId, restricted: input.restricted, priority: input.priority ?? i.priority, status: 'PRE_LITIGATION',
@@ -458,22 +465,34 @@ export class LitigationService implements OnModuleInit {
     return row;
   }
 
-  async addOutcome(caseId: string, o: { kind: string; decidedOn: Date; amount?: string | null; currency?: string; direction: string; paymentStatus?: string; terms?: string | null }) {
+  async addOutcome(caseId: string, o: OutcomeInput) {
     await this.writable(caseId);
-    const row = await this.prisma.db.outcome.create({
-      data: { caseId, kind: o.kind, decidedOn: o.decidedOn, amountEnc: o.amount ? this.crypto.encrypt(o.amount) : null, currency: o.currency ?? 'MVR', direction: o.direction, paymentStatus: o.paymentStatus ?? 'PENDING', terms: o.terms ?? null },
+    const c = await this.prisma.db.litigationCase.findUniqueOrThrow({ where: { matterId: caseId }, include: { court: true } });
+    // Appeal period: what the user entered, else the court's default (judgments only).
+    const appealDays = o.kind === 'JUDGMENT' ? (o.appealDays ?? c.court?.appealDays ?? null) : null;
+    const row = await this.prisma.tx(async () => {
+      const r = await this.prisma.db.outcome.create({
+        data: { caseId, kind: o.kind, decidedOn: o.decidedOn, amountEnc: o.amount ? this.crypto.encrypt(o.amount) : null, currency: o.currency ?? 'MVR', direction: o.direction, paymentStatus: o.paymentStatus ?? 'PENDING', terms: o.terms ?? null,
+          appealDays, appealDayKind: appealDays ? (o.appealDayKind ?? c.court?.appealDayKind ?? 'CALENDAR') : null, appealFrom: o.appealFrom ?? null,
+          appealDecision: o.kind === 'JUDGMENT' ? (o.appealDecision ?? 'UNDECIDED') : null, complyBy: o.complyBy ?? null },
+      });
+      await this.prisma.db.litigationCase.update({ where: { matterId: caseId }, data: { lastUpdateAt: new Date() } });
+      await this.syncOutcomeDeadlines(r.id);
+      return r;
     });
-    await this.prisma.db.litigationCase.update({ where: { matterId: caseId }, data: { lastUpdateAt: new Date() } });
     await this.audit.log({ action: 'lit.outcome.added', entityType: 'Outcome', entityId: row.id, after: { ...o, amount: o.amount ? '[encrypted]' : null } });
     return row;
   }
 
-  async updateOutcome(id: string, data: { paymentStatus?: string; amount?: string | null; kind?: string; decidedOn?: Date; currency?: string; direction?: string; terms?: string | null }) {
+  async updateOutcome(id: string, data: Partial<OutcomeInput>) {
     const o = await this.prisma.db.outcome.findUnique({ where: { id } });
     if (!o) throw notFound('Outcome');
     await this.writable(o.caseId);
     const { amount, ...rest } = data;
-    await this.prisma.db.outcome.update({ where: { id }, data: { ...rest, ...(amount !== undefined ? { amountEnc: amount ? this.crypto.encrypt(amount) : null } : {}) } });
+    await this.prisma.tx(async () => {
+      await this.prisma.db.outcome.update({ where: { id }, data: { ...rest, ...(amount !== undefined ? { amountEnc: amount ? this.crypto.encrypt(amount) : null } : {}) } });
+      await this.syncOutcomeDeadlines(id);
+    });
     const diff = changedFields(o as unknown as Record<string, unknown>, { ...rest, ...(amount !== undefined && this.crypto.decrypt(o.amountEnc) !== amount ? { amount: '[changed]' } : {}) });
     if (diff) await this.audit.log({ action: 'lit.outcome.updated', entityType: 'Outcome', entityId: id, ...diff, meta: { matterId: o.caseId } });
     return { ok: true };
@@ -599,6 +618,119 @@ export class LitigationService implements OnModuleInit {
       });
     }
     return { flagged: cases.length };
+  }
+
+  // ------------------------------------------------------------------ hearing reminders
+  /** Who hears about a hearing: responsible officer + assignees + Litigation Unit Head(s) (+ HoD); restricted → named people + HoD only. */
+  private async hearingRecipients(caseId: string, restricted: boolean, officerId: string | null, opts: { hod: boolean }) {
+    const assignees = (await this.prisma.db.matterAssignment.findMany({ where: { matterId: caseId }, select: { userId: true } })).map((a) => a.userId);
+    let heads = await this.notifications.usersWithRole('UNIT_HEAD', 'LIT');
+    const hods = opts.hod ? await this.notifications.usersWithRole('HOD') : [];
+    let people = [officerId, ...assignees];
+    if (restricted) {
+      const named = new Set((await this.prisma.db.matterAccess.findMany({ where: { matterId: caseId }, select: { userId: true } })).map((a) => a.userId));
+      heads = heads.filter((h) => named.has(h));
+      people = people.filter((p) => p && named.has(p));
+    }
+    return [...new Set([...people, ...heads, ...hods].filter((x): x is string => !!x))];
+  }
+
+  private hearingLine(h: { startsAt: Date; purpose: string | null; judge: string | null; chitSummary: string | null; court: { name: string } | null; case: { courtCaseNo: string | null; matter: { reference: string; title: string; restricted: boolean } } }) {
+    const time = new Date(h.startsAt.getTime() + 5 * 3600_000).toISOString().slice(11, 16);
+    const date = new Date(h.startsAt.getTime() + 5 * 3600_000).toISOString().slice(0, 10);
+    const m = h.case.matter;
+    if (m.restricted) return `${date} ${time} · ${h.court?.name ?? 'Court'} · ${m.reference} (confidential matter - sign in to see details)`;
+    return [`${date} ${time} · ${h.court?.name ?? 'Court'}${h.case.courtCaseNo ? ` · case ${h.case.courtCaseNo}` : ''}`, `${m.reference} ${m.title}`,
+      h.purpose ? `Purpose: ${h.purpose}` : null, h.judge ? `Judge: ${h.judge}` : null, h.chitSummary ? `Chit: ${h.chitSummary}` : null].filter(Boolean).join('\n   ');
+  }
+
+  private readonly hearingInclude = { court: { select: { name: true } }, case: { select: { courtCaseNo: true, responsibleOfficerId: true, matter: { select: { id: true, reference: true, title: true, restricted: true, closedAt: true } } } } } as const;
+
+  /**
+   * Afternoon job (every day; acts only on working days): remind about hearings up to the end of the NEXT working day,
+   * so Sunday's hearings are reminded on Thursday. Sent once per hearing (reminderSentAt).
+   */
+  async hearingReminders(now = new Date()) {
+    const cfg = await this.settings.get<{ dayBefore: boolean; morningDigest: boolean; includeHod: boolean }>('litigation.hearingReminders');
+    if (!cfg.dayBefore) return { sent: 0 };
+    const cal = await this.settings.calendar();
+    const today = localDayNumber(now, cal);
+    if (!isBusinessDayNumber(today, cal)) return { sent: 0 };
+    let next = today + 1;
+    while (!isBusinessDayNumber(next, cal) && next < today + 15) next++;
+    const hearings = await this.prisma.db.hearing.findMany({
+      where: { status: 'SCHEDULED', reminderSentAt: null, startsAt: { gte: startOfLocalDay(today + 1, cal), lt: startOfLocalDay(next + 1, cal) }, case: { matter: { closedAt: null } } },
+      include: this.hearingInclude, orderBy: { startsAt: 'asc' },
+    });
+    for (const h of hearings) {
+      await this.prisma.db.hearing.update({ where: { id: h.id }, data: { reminderSentAt: now } });
+      const to = await this.hearingRecipients(h.caseId, h.case.matter.restricted, h.case.responsibleOfficerId, { hod: false });
+      await this.notifications.notify(to, {
+        type: 'lit.hearing-reminder', title: `Hearing reminder: ${h.case.matter.reference}`, body: `${this.hearingLine(h)}\n\nPrepare the file, documents and attendance.`,
+        link: `/litigation/${h.caseId}`, matterId: h.caseId, restricted: h.case.matter.restricted,
+      });
+    }
+    return { sent: hearings.length };
+  }
+
+  /** Morning job: each person gets ONE message listing today's hearings that concern them. */
+  async hearingDigest(now = new Date()) {
+    const cfg = await this.settings.get<{ dayBefore: boolean; morningDigest: boolean; includeHod: boolean }>('litigation.hearingReminders');
+    if (!cfg.morningDigest) return { users: 0 };
+    const cal = await this.settings.calendar();
+    const today = localDayNumber(now, cal);
+    const hearings = await this.prisma.db.hearing.findMany({
+      where: { status: 'SCHEDULED', startsAt: { gte: startOfLocalDay(today, cal), lt: startOfLocalDay(today + 1, cal) }, case: { matter: { closedAt: null } } },
+      include: this.hearingInclude, orderBy: { startsAt: 'asc' },
+    });
+    const perUser = new Map<string, typeof hearings>();
+    for (const h of hearings) {
+      for (const u of await this.hearingRecipients(h.caseId, h.case.matter.restricted, h.case.responsibleOfficerId, { hod: cfg.includeHod })) {
+        perUser.set(u, [...(perUser.get(u) ?? []), h]);
+      }
+    }
+    for (const [userId, list] of perUser) {
+      await this.notifications.notify([userId], {
+        type: 'lit.hearing-digest', title: `Today's hearings: ${list.length}`, body: list.map((h, i) => `${i + 1}. ${this.hearingLine(h)}`).join('\n\n'),
+        link: '/calendar', restricted: list.some((h) => h.case.matter.restricted), emailAlways: false,
+      });
+    }
+    return { users: perUser.size, hearings: hearings.length };
+  }
+
+  // ------------------------------------------------------------------ judgment: appeal + compliance deadlines
+  /** Appeal deadline = appealFrom (default the decision date) + N calendar or business days. */
+  async appealDue(from: Date, days: number, kind: string) {
+    return kind === 'BUSINESS' ? addBusinessDays(from, days, await this.settings.calendar()) : addCalendarDays(from, days);
+  }
+
+  /** Creates/updates/closes the APPEAL and comply-by deadlines that belong to an outcome. */
+  private async syncOutcomeDeadlines(outcomeId: string) {
+    const o = await this.prisma.db.outcome.findUniqueOrThrow({ where: { id: outcomeId }, include: { case: { select: { responsibleOfficerId: true } } } });
+    const owner = o.case.responsibleOfficerId;
+    const date = o.decidedOn.toISOString().slice(0, 10);
+    const upsert = async (existingId: string | null, want: { type: string; title: string; dueAt: Date } | null, field: 'appealDeadlineId' | 'complyDeadlineId') => {
+      if (!want) {
+        if (existingId) {
+          const d = await this.prisma.db.caseDeadline.findUnique({ where: { id: existingId } });
+          if (d && d.status === 'OPEN') { await this.prisma.db.caseDeadline.update({ where: { id: existingId }, data: { status: 'DONE', completedAt: new Date() } }); await this.calendar.cancel('CaseDeadline', existingId); }
+        }
+        return;
+      }
+      const existing = existingId ? await this.prisma.db.caseDeadline.findUnique({ where: { id: existingId } }) : null;
+      if (existing) await this.updateDeadline(existing.id, { title: want.title, dueAt: want.dueAt });
+      else {
+        const d = await this.addDeadline(o.caseId, { ...want, ownerId: owner });
+        await this.prisma.db.outcome.update({ where: { id: outcomeId }, data: { [field]: d.id } });
+      }
+    };
+    const appealOpen = o.kind === 'JUDGMENT' && o.appealDays && o.appealDecision !== 'NO_APPEAL' && o.appealDecision !== 'APPEAL';
+    await upsert(o.appealDeadlineId, appealOpen
+      ? { type: 'APPEAL', title: `Appeal deadline (judgment of ${date})`, dueAt: await this.appealDue(o.appealFrom ?? o.decidedOn, o.appealDays!, o.appealDayKind ?? 'CALENDAR') }
+      : null, 'appealDeadlineId');
+    await upsert(o.complyDeadlineId, o.complyBy && o.paymentStatus !== 'PAID' && o.paymentStatus !== 'NA'
+      ? { type: 'OTHER', title: `Comply with ${o.kind === 'JUDGMENT' ? 'judgment' : 'settlement'} of ${date}`, dueAt: o.complyBy }
+      : null, 'complyDeadlineId');
   }
 
   /** Overdue hearing summaries are covered by the SLA scan; this helper backs the dashboard. */

@@ -441,6 +441,10 @@ model Court {
   name         String           @unique
   kind         String           @default("COURT") // COURT | TRIBUNAL | ARBITRATION
   jurisdiction String?
+  /// Appeal period after a judgment of this court (days); null = enter it per judgment.
+  appealDays    Int?
+  /// CALENDAR or BUSINESS days
+  appealDayKind String           @default("CALENDAR")
   cases        LitigationCase[]
   hearings     Hearing[]
 }
@@ -688,6 +692,7 @@ model Document {
   poaId              String?
   poa                PowerOfAttorney?  @relation(fields: [poaId], references: [id])
   templateId         String?
+  template           Template?         @relation(fields: [templateId], references: [id])
   libraryKind        String? // TEMPLATE | MATERIAL | IMPORT | REPORT
   currentVersionNo   Int               @default(0)
   checkedOutById     String?
@@ -916,6 +921,8 @@ model Hearing {
   continuanceStatus      String?
   continuanceRequestedAt DateTime?
   continuanceNote        String?
+  /// When the day-before reminder went out (so it is sent once).
+  reminderSentAt         DateTime?
   createdAt              DateTime       @default(now())
 
   documents Document[]
@@ -999,6 +1006,16 @@ model Outcome {
   direction     String // PAYABLE | RECEIVABLE | NONE
   paymentStatus String              @default("PENDING") // PENDING | PARTIAL | PAID | NA
   terms         String?
+  /// Appeal: period in days counted from appealFrom (default decidedOn); a CaseDeadline (type APPEAL) tracks it.
+  appealDays       Int?
+  appealDayKind    String?
+  appealFrom       DateTime?
+  appealDeadlineId String?
+  /// UNDECIDED | APPEAL | NO_APPEAL
+  appealDecision   String?
+  /// Date by which the judgment/settlement must be complied with (payment etc.); tracked as a deadline.
+  complyBy         DateTime?
+  complyDeadlineId String?
   enforcement   EnforcementAction[]
 }
 
@@ -1078,23 +1095,53 @@ model Approval {
 }
 
 model Template {
-  id         String   @id @default(cuid())
-  name       String   @unique
-  category   String
-  body       String?
-  documentId String?
-  status     String   @default("DRAFT") // DRAFT | APPROVED | RETIRED
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id           String     @id @default(cuid())
+  name         String     @unique
+  /// CONTRACT | LETTER | OPINION | POLICY | NOTICE | OTHER
+  kind         String     @default("CONTRACT")
+  category     String
+  body         String?
+  /// When / how to use it (shown to drafters).
+  guidance     String?
+  documentId   String?
+  status       String     @default("DRAFT") // DRAFT | APPROVED | RETIRED
+  version      Int        @default(1)
+  approvedById String?
+  approvedAt   DateTime?
+  updatedById  String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  documents    Document[]
 }
 
 model Clause {
-  id        String   @id @default(cuid())
-  title     String
-  body      String
-  tags      String[] @default([])
-  status    String   @default("APPROVED")
-  createdAt DateTime @default(now())
+  id           String   @id @default(cuid())
+  title        String
+  category     String?
+  body         String
+  guidance     String?
+  tags         String[] @default([])
+  status       String   @default("APPROVED")
+  version      Int      @default(1)
+  approvedById String?
+  approvedAt   DateTime?
+  updatedById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now()) @updatedAt
+}
+
+/// Earlier versions of templates and clauses (snapshot of the text when it changed).
+model LibraryVersion {
+  id          String   @id @default(cuid())
+  itemType    String // TEMPLATE | CLAUSE
+  itemId      String
+  version     Int
+  snapshot    Json
+  changedById String?
+  note        String?
+  createdAt   DateTime @default(now())
+
+  @@unique([itemType, itemId, version])
 }
 
 model Contract {
@@ -1446,6 +1493,10 @@ model ReportTemplate {
   format      String // XLSX | DOCX
   documentId  String   @unique
   active      Boolean  @default(true)
+  /// Send automatically (Sunday for the past week / 1st of the month for the past month) to these users.
+  autoSend     Boolean  @default(false)
+  recipientIds String[] @default([])
+  lastSentRef  String?
   createdById String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

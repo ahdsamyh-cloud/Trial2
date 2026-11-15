@@ -8,7 +8,7 @@ import { parse, qs } from '../../common/zod';
 import { config } from '../../config';
 import { DocumentsService, OwnerType } from './documents.service';
 
-const OWNER_TYPES = ['matter', 'intake', 'hearing', 'law', 'checkItem', 'finding', 'session', 'contract', 'poa', 'library'] as const;
+const OWNER_TYPES = ['matter', 'intake', 'hearing', 'law', 'checkItem', 'finding', 'session', 'contract', 'poa', 'template', 'library'] as const;
 const uploadSchema = z.object({
   ownerType: z.enum(OWNER_TYPES),
   ownerId: z.string().max(40).optional(),

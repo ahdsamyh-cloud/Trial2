@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { UNIT_NAMES } from '@ldms/shared';
 import { api, download } from '@/lib/api';
 import { useApi, useAction } from '@/lib/hooks';
@@ -7,8 +7,9 @@ import { fmtDateTime, label } from '@/lib/format';
 import { t } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth';
 import { Alert, Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, StatusBadge, Tabs } from '@/components/ui';
+import { useDirectory } from '@/components/parts';
 
-interface Template { id: string; name: string; unit: string | null; period: string; format: string; active: boolean; createdAt: string; file: { filename: string; scanStatus: string; createdAt: string } | null }
+interface Template { id: string; name: string; unit: string | null; period: string; format: string; active: boolean; autoSend: boolean; recipientIds: string[]; lastSentRef: string | null; createdAt: string; file: { filename: string; scanStatus: string; createdAt: string } | null }
 interface FieldDef { group: string; key: string; label: string; list?: string[] }
 
 const UNIT_OPTIONS = [{ value: '', label: 'Whole department' }, ...(['LIT', 'DRF', 'CMP', 'AWR'] as const).map((u) => ({ value: u, label: UNIT_NAMES[u] }))];
@@ -19,9 +20,32 @@ export default function Reports() {
   return (
     <div>
       <PageHeader title={t('Reports')} subtitle={t('Weekly and monthly reports for every unit, in your own Excel or Word formats.')} />
+      <AutoReportLink />
       <Tabs tabs={[{ id: 'formats', label: t('My report formats') }, { id: 'standard', label: t('Standard report') }, { id: 'help', label: t('Placeholders & samples') }]} active={tab} onChange={setTab} />
       {tab === 'formats' ? <Formats /> : tab === 'standard' ? <Standard /> : <Help />}
     </div>
+  );
+}
+
+/**
+ * Link from an automatic report notification (/reports?run=<format>&period=WEEKLY&ref=2026-11-14):
+ * the report is generated now, with the reader's own access, when they press Download.
+ */
+function AutoReportLink() {
+  const [q, setQ] = useState<{ run: string; period: string; ref: string } | null>(null);
+  const act = useAction();
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const run = p.get('run'); const period = p.get('period'); const ref = p.get('ref');
+    if (run && (period === 'WEEKLY' || period === 'MONTHLY') && ref) setQ({ run, period, ref });
+  }, []);
+  if (!q) return null;
+  return (
+    <Card title={t('Your automatic report')} className="mb-4">
+      <p className="text-sm">{q.period === 'WEEKLY' ? t('Weekly report for the week of {d}.', { d: q.ref }) : t('Monthly report for {m}.', { m: q.ref })}</p>
+      {act.error ? <Alert>{act.error}</Alert> : null}
+      <Button className="mt-2" busy={act.busy} onClick={() => act.run(() => download(`/reports/templates/${encodeURIComponent(q.run)}/generate?period=${q.period}&ref=${encodeURIComponent(q.ref)}`))}>{t('Download report')}</Button>
+    </Card>
   );
 }
 
@@ -43,12 +67,14 @@ function Formats() {
   const { data, reload } = useApi<Template[]>('/reports/templates');
   const [period, setPeriod] = useState('WEEKLY');
   const [ref_, setRef] = useState(today());
-  const [upload, setUpload] = useState<{ id?: string; name: string; unit: string; period: string; file: File | null } | null>(null);
+  const [upload, setUpload] = useState<{ id?: string; name: string; unit: string; period: string; file: File | null; autoSend: boolean; recipientIds: string[] } | null>(null);
+  const staff = useDirectory();
   const act = useAction();
   const send = () => act.run(async () => {
     const fd = new FormData();
     if (upload!.file) fd.set('file', upload!.file);
     fd.set('name', upload!.name); fd.set('unit', upload!.unit); fd.set('period', upload!.period);
+    fd.set('autoSend', String(upload!.autoSend && upload!.period !== 'ANY')); fd.set('recipientIds', upload!.recipientIds.join(','));
     if (upload!.id) await api.patch(`/reports/templates/${upload!.id}`, fd); else await api.form('/reports/templates', fd);
     setUpload(null); await reload();
   });
@@ -58,16 +84,16 @@ function Formats() {
         <PeriodPicker period={period} setPeriod={setPeriod} ref_={ref_} setRef={setRef} />
         <p className="mt-2 text-xs text-slate-500">{t('Choose the period, then "Generate" next to a format. The file is filled with the live data you are allowed to see.')}</p>
       </Card>
-      <Card title={t('Report formats')} actions={manage ? <Button size="sm" onClick={() => setUpload({ name: '', unit: '', period: 'ANY', file: null })}>{t('Upload a format')}</Button> : null}>
+      <Card title={t('Report formats')} actions={manage ? <Button size="sm" onClick={() => setUpload({ name: '', unit: '', period: 'WEEKLY', file: null, autoSend: false, recipientIds: me ? [me.id] : [] })}>{t('Upload a format')}</Button> : null}>
         {act.error ? <Alert>{act.error}</Alert> : null}
         {!data ? null : !data.length ? <Empty>{t('No formats yet. Upload your Excel or Word report format (see "Placeholders & samples").')}</Empty> : (
           <ul className="divide-y text-sm" data-testid="report-formats">{data.map((r) => (
             <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-              <span className="space-x-1"><span className="font-medium">{r.name}</span> <Badge>{r.format === 'XLSX' ? 'Excel' : 'Word'}</Badge><Badge tone="blue">{r.unit ? UNIT_NAMES[r.unit as 'LIT'] : t('Whole department')}</Badge><Badge>{r.period === 'ANY' ? t('Weekly or monthly') : label(r.period)}</Badge>{!r.active ? <Badge tone="amber">{t('Inactive')}</Badge> : null}
+              <span className="space-x-1"><span className="font-medium">{r.name}</span> <Badge>{r.format === 'XLSX' ? 'Excel' : 'Word'}</Badge><Badge tone="blue">{r.unit ? UNIT_NAMES[r.unit as 'LIT'] : t('Whole department')}</Badge><Badge>{r.period === 'ANY' ? t('Weekly or monthly') : label(r.period)}</Badge>{!r.active ? <Badge tone="amber">{t('Inactive')}</Badge> : null}{r.autoSend && r.active ? <Badge tone="green">{r.period === 'WEEKLY' ? t('Sent every Sunday') : t('Sent on the 1st of each month')}</Badge> : null}
                 <span className="text-xs text-slate-500">{r.file ? `${r.file.filename} · ${fmtDateTime(r.file.createdAt)}` : ''}</span>{r.file && r.file.scanStatus !== 'CLEAN' ? <StatusBadge value={r.file.scanStatus} /> : null}</span>
               <span className="flex flex-wrap gap-1">
                 {r.active ? <Button size="sm" busy={act.busy} disabled={r.period !== 'ANY' && r.period !== period} onClick={() => act.run(() => download(`/reports/templates/${r.id}/generate?period=${period}&ref=${encodeURIComponent(ref_)}`, `${r.name}.${r.format === 'XLSX' ? 'xlsx' : 'docx'}`))}>{t('Generate')}</Button> : null}
-                {manage ? <Button size="sm" variant="ghost" onClick={() => setUpload({ id: r.id, name: r.name, unit: r.unit ?? '', period: r.period, file: null })}>{t('Edit / replace file')}</Button> : null}
+                {manage ? <Button size="sm" variant="ghost" onClick={() => setUpload({ id: r.id, name: r.name, unit: r.unit ?? '', period: r.period, file: null, autoSend: r.autoSend, recipientIds: r.recipientIds })}>{t('Edit / replace file')}</Button> : null}
                 {manage ? <Button size="sm" variant="ghost" onClick={() => act.run(async () => { const fd = new FormData(); fd.set('active', String(!r.active)); await api.patch(`/reports/templates/${r.id}`, fd); await reload(); })}>{r.active ? t('Deactivate') : t('Activate')}</Button> : null}
               </span>
             </li>
@@ -82,6 +108,19 @@ function Formats() {
           <Field label={t('Used for')}>{(id) => <Select id={id} value={upload.period} onChange={(e) => setUpload({ ...upload, period: e.target.value })} options={[{ value: 'ANY', label: t('Weekly or monthly') }, { value: 'WEEKLY', label: t('Weekly only') }, { value: 'MONTHLY', label: t('Monthly only') }]} />}</Field>
           <Field label={upload.id ? t('New file (optional, replaces the current one)') : t('Excel (.xlsx) or Word (.docx) file')} required={!upload.id}>{(id) => <input id={id} type="file" accept=".xlsx,.docx" className="block w-full text-sm" onChange={(e) => setUpload({ ...upload, file: e.target.files?.[0] ?? null })} />}</Field>
           <p className="text-xs text-slate-500">{t('The file is virus-scanned before it can be used. Old versions are kept.')}</p>
+          {upload.period !== 'ANY' ? (
+            <fieldset className="mt-3 rounded border p-3">
+              <legend className="px-1 text-sm font-medium">{t('Send automatically')}</legend>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={upload.autoSend} onChange={(e) => setUpload({ ...upload, autoSend: e.target.checked })} />
+                {upload.period === 'WEEKLY' ? t('Every Sunday at 8:00, for the week that just ended') : t('On the 1st of each month at 8:00, for the month that just ended')}</label>
+              {upload.autoSend ? <>
+                <p className="mt-2 text-xs text-slate-500">{t('Recipients get a notification and an email with a link. The report is filled when they open the link, with the data they are allowed to see; nothing confidential is put in the email itself.')}</p>
+                <div className="mt-2 max-h-48 space-y-1 overflow-y-auto">{(staff.data ?? []).map((u) => (
+                  <label key={u.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={upload.recipientIds.includes(u.id)} onChange={(e) => setUpload({ ...upload, recipientIds: e.target.checked ? [...upload.recipientIds, u.id] : upload.recipientIds.filter((x) => x !== u.id) })} />{u.displayName}</label>
+                ))}</div>
+              </> : null}
+            </fieldset>
+          ) : <p className="mt-2 text-xs text-slate-500">{t('To send it automatically, choose "Weekly only" or "Monthly only".')}</p>}
         </> : null}
       </Modal>
     </div>
@@ -110,7 +149,7 @@ function Standard() {
       {error ? <Alert>{error.message}</Alert> : !data ? null : (
         <div className="grid gap-4 md:grid-cols-2">{data.sections.map((s) => (
           <div key={s.title}><h3 className="mb-1 text-sm font-semibold">{s.title}</h3>
-            <table className="w-full text-sm"><tbody>{s.rows.map(([k, v]) => <tr key={k} className="border-b last:border-0"><td className="py-1 pr-2 text-slate-600">{k}</td><td className="py-1 text-right font-medium">{v}</td></tr>)}</tbody></table>
+            <table className="w-full text-sm"><tbody>{s.rows.map(([k, v]) => <tr key={k} className="border-b last:border-0"><td className="py-1 pe-2 text-slate-600">{k}</td><td className="py-1 text-end font-medium">{v}</td></tr>)}</tbody></table>
           </div>
         ))}</div>
       )}
@@ -125,7 +164,7 @@ function Help() {
   return (
     <div className="space-y-4">
       <Card title={t('How report formats work')}>
-        <ol className="list-decimal space-y-1 pl-5 text-sm">
+        <ol className="list-decimal space-y-1 ps-5 text-sm">
           <li>{t('Make your report in Excel or Word, as you want it to look (logo, headings, tables).')}</li>
           <li>{t('Where a value should go, type a placeholder in double curly braces, e.g. {{report.period}} or {{lit.counts.hearings}}.')}</li>
           <li>{t('Excel tables: put list placeholders in one row, e.g. {{lit.hearings.date}} | {{lit.hearings.reference}} | {{lit.hearings.chitSummary}}. That row is repeated for every hearing. {{#}} gives the row number.')}</li>
@@ -141,7 +180,7 @@ function Help() {
         <Card key={g} title={t(g)}>
           <table className="w-full text-sm"><tbody>{(data ?? []).filter((f) => f.group === g).map((f) => (
             <tr key={f.key} className="border-b align-top last:border-0">
-              <td className="py-1 pr-3"><code className="text-xs" dir="ltr">{f.list ? `{{${f.key}.…}}` : `{{${f.key}}}`}</code></td>
+              <td className="py-1 pe-3"><code className="text-xs" dir="ltr">{f.list ? `{{${f.key}.…}}` : `{{${f.key}}}`}</code></td>
               <td className="py-1">{f.label}{f.list ? <div className="text-xs text-slate-500">{t('Fields')}: {f.list.join(', ')}</div> : null}</td>
             </tr>
           ))}</tbody></table>

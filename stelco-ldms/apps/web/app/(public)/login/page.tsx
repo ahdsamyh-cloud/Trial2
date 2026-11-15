@@ -102,7 +102,7 @@ function LoginInner() {
             {step === 'enrol' && enrol ? (
               <>
                 <h1 className="text-lg font-semibold">{t('Set up two-factor authentication')}</h1>
-                <ol className="list-decimal space-y-1 pl-5 text-sm text-slate-700">
+                <ol className="list-decimal space-y-1 ps-5 text-sm text-slate-700">
                   <li>{t('Open Microsoft Authenticator or Google Authenticator on your phone.')}</li>
                   <li>{t('Add an account and scan this QR code.')}</li>
                   <li>{t('Enter the 6-digit code it shows.')}</li>

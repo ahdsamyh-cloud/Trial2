@@ -224,7 +224,7 @@ export class MattersService {
 
   /** Check that a person works in the matter's unit (or is HoD). */
   async assertLegalStaff(userId: string, unit: Unit) {
-    const roles = await this.prisma.base.userRole.findMany({ where: { userId, user: { status: 'ACTIVE' } } });
+    const roles = await this.prisma.raw.userRole.findMany({ where: { userId, user: { status: 'ACTIVE' } } });
     if (!roles.some((r) => r.role === 'HOD' || (r.unit === unit && ['UNIT_HEAD', 'LEGAL_OFFICER', 'PARALEGAL'].includes(r.role)))) {
       throw badRequest('That person is not a member of this unit');
     }
