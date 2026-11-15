@@ -182,7 +182,7 @@ export class ComplianceController {
   @Can('matter:read', 'cmp:write', 'report:read')
   async departmentReport(@Query() query: unknown, @Res({ passthrough: true }) res: Response) {
     const q = qrec(query, ['year', 'format']);
-    const year = q.year && /^\d{4}$/.test(q.year) ? Number(q.year) : undefined;
+    const year = q.year && q.year.length === 4 && [...q.year].every((c) => c >= '0' && c <= '9') ? Number(q.year) : undefined;
     const r = await this.cmp.departmentReport(year);
     if (q.format === 'xlsx') {
       return this.exporter.sendSheets(res, `compliance-by-department-${r.year}`, [

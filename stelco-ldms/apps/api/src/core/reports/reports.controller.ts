@@ -31,7 +31,7 @@ export class ReportsController {
     if (q.format === 'json') return r;
     await this.reports.logExport(q.kind, q.period, q.format);
     const buf = q.format === 'pdf' ? await this.reports.pdf(r) : await this.reports.xlsx(r);
-    this.exporter.sendFile(res, `ldms-${q.unit ? `${q.unit.toLowerCase()}-` : ''}${q.kind}-report-${q.period}.${q.format}`, buf, q.format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    this.exporter.sendDownload(res, `ldms-${q.unit ? `${q.unit.toLowerCase()}-` : ''}${q.kind}-report-${q.period}.${q.format}`, buf, q.format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   }
 
   // ------------------------------------------------------------------ uploaded report formats
@@ -54,7 +54,7 @@ export class ReportsController {
   async sample(@Query() query: unknown, @Res({ passthrough: true }) res: Response) {
     const q = qrec(query, ['unit']);
     const unit = this.unit(q.unit);
-    this.exporter.sendFile(res, `report-format-sample${unit ? `-${unit.toLowerCase()}` : ''}.xlsx`, await this.templates.sample(unit), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    this.exporter.sendDownload(res, `report-format-sample${unit ? `-${unit.toLowerCase()}` : ''}.xlsx`, await this.templates.sample(unit), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   }
 
   @Get('templates')
@@ -90,7 +90,7 @@ export class ReportsController {
   async generate(@Param('id') id: string, @Query() query: unknown, @Res({ passthrough: true }) res: Response) {
     const q = qrec(query, ['period', 'ref', 'unit']);
     const out = await this.templates.generate(id, this.period(q.period), q.ref ?? '', q.unit === undefined ? undefined : this.unit(q.unit));
-    this.exporter.sendFile(res, out.filename, out.buffer, out.mime);
+    this.exporter.sendDownload(res, out.filename, out.buffer, out.mime);
   }
 
   private period(p?: string): 'WEEKLY' | 'MONTHLY' {

@@ -48,11 +48,11 @@ export class ExportService {
     const user = currentUser();
     await this.audit.log({ action: 'export.list', entityType: name, meta: { rows, sheets: sheets.length, ...meta } });
     await this.alerts.onExport(user.id, user.username, rows);
-    this.sendFile(res, `${name.replace(/[^a-z0-9-]+/gi, '-')}-${new Date().toISOString().slice(0, 10)}.xlsx`, buf, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    this.sendDownload(res, `${name.replace(/[^a-z0-9-]+/gi, '-')}-${new Date().toISOString().slice(0, 10)}.xlsx`, buf, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   }
 
   /** Stream a generated file to the browser as a download (never cached). */
-  sendFile(res: Response, filename: string, buf: Buffer, contentType: string) {
+  sendDownload(res: Response, filename: string, buf: Buffer, contentType: string) {
     const safe = filename.replace(/[^\w.() -]+/g, '-');
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${safe}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
