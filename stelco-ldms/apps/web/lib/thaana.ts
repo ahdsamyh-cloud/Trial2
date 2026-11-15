@@ -33,3 +33,33 @@ export function handleThaanaKey(e: KeyboardEvent): boolean {
   field.dispatchEvent(new Event('input', { bubbles: true }));
   return true;
 }
+
+// ---------------------------------------------------------------- shared on/off state
+// One state for every toggle button (header and dialogs) and ONE keydown listener, so two buttons
+// can never both insert a letter.
+const KEY = 'ldms.thaanaKeyboard';
+let on = false;
+let installed = false;
+const subscribers = new Set<() => void>();
+
+function install() {
+  if (installed || typeof document === 'undefined') return;
+  installed = true;
+  try { on = localStorage.getItem(KEY) === '1'; } catch { /* storage unavailable: default off */ }
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) { e.preventDefault(); setThaana(!on); return; }
+    if (on) handleThaanaKey(e);
+  });
+}
+
+export function subscribeThaana(cb: () => void) {
+  install();
+  subscribers.add(cb);
+  return () => { subscribers.delete(cb); };
+}
+export const thaanaOn = () => on;
+export function setThaana(v: boolean) {
+  on = v;
+  try { localStorage.setItem(KEY, v ? '1' : '0'); } catch { /* storage unavailable */ }
+  for (const s of subscribers) s();
+}

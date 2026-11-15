@@ -63,7 +63,7 @@ export function LitigationPanels({ m, reloadMatter }: { m: MatterDetail; reloadM
   const next = c.allowedStatuses[m.status] ?? [];
   const opt = (rows?: { id: string; name: string }[]) => (rows ?? []).map((r) => ({ value: r.id, label: r.name }));
   const err = act.error ? <Alert>{act.error}</Alert> : null;
-  const save = (fn: () => Promise<unknown>) => <Button busy={act.busy} onClick={() => act.run(async () => { await fn(); await done(); })}>{t('Save')}</Button>;
+  const save = (fn: () => Promise<unknown>, text = t('Save')) => <Button busy={act.busy} onClick={() => act.run(async () => { await fn(); await done(); })}>{text}</Button>;
   const hearingSel = c.hearings.find((h) => h.id === sel);
 
   return (
@@ -277,7 +277,7 @@ export function LitigationPanels({ m, reloadMatter }: { m: MatterDetail; reloadM
         whatHappened: form.whatHappened ?? '', ordersMade: form.ordersMade, nextSteps: form.nextSteps, companyActions: form.companyActions, outcome: form.outcome || null,
         nextHearingAt: form.nextHearingAt ? fromLocalInput(form.nextHearingAt) : null,
         attendees: { internal: (form.internal ?? '').split(',').map((s) => s.trim()).filter(Boolean), external: (form.external ?? '').split(',').map((s) => s.trim()).filter(Boolean) },
-      }))}>
+      }), t('Save summary'))}>
         {err}
         <Field label={t('What happened')} required>{(id) => <Textarea id={id} value={form.whatHappened ?? ''} onChange={set('whatHappened')} />}</Field>
         <Field label={t('Orders made')}>{(id) => <Textarea id={id} value={form.ordersMade ?? ''} onChange={set('ordersMade')} />}</Field>
@@ -290,7 +290,7 @@ export function LitigationPanels({ m, reloadMatter }: { m: MatterDetail; reloadM
           <Field label={t('Next hearing date')} hint={t('Creates the next hearing and calendar entry.')}>{(id) => <Input id={id} type="datetime-local" value={form.nextHearingAt ?? ''} onChange={set('nextHearingAt')} />}</Field>
         </div>
       </Modal>
-      <Modal open={dlg === 'editSummary'} wide title={t('Edit hearing summary')} onClose={close} footer={save(() => api.patch(`/litigation/hearings/${sel}`, { summary: { whatHappened: form.whatHappened ?? '', ordersMade: form.ordersMade ?? '', nextSteps: form.nextSteps ?? '', companyActions: form.companyActions ?? '' } }))}>
+      <Modal open={dlg === 'editSummary'} wide title={t('Edit hearing summary')} onClose={close} footer={save(() => api.patch(`/litigation/hearings/${sel}`, { summary: { whatHappened: form.whatHappened ?? '', ordersMade: form.ordersMade ?? '', nextSteps: form.nextSteps ?? '', companyActions: form.companyActions ?? '' } }), t('Save summary'))}>
         {err}
         <Field label={t('What happened')} required>{(id) => <Textarea id={id} value={form.whatHappened ?? ''} onChange={set('whatHappened')} />}</Field>
         <Field label={t('Orders made')}>{(id) => <Textarea id={id} value={form.ordersMade ?? ''} onChange={set('ordersMade')} />}</Field>

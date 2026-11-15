@@ -1,4 +1,5 @@
 'use client';
+import { ThaanaToggle } from './thaana-toggle';
 import clsx from 'clsx';
 import { ButtonHTMLAttributes, forwardRef, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes, useEffect, useId, useRef } from 'react';
 import { t } from '@/lib/i18n';
@@ -148,6 +149,7 @@ export function Modal({ open, title, onClose, children, footer, wide }: { open: 
       <div ref={ref} role="dialog" aria-modal="true" aria-label={title} className={clsx('max-h-[92vh] w-full overflow-y-auto rounded-t-xl bg-white shadow-xl sm:rounded-xl', wide ? 'sm:max-w-3xl' : 'sm:max-w-lg')}>
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h2 className="text-base font-semibold">{title}</h2>
+          <span className="ml-auto mr-1"><ThaanaToggle compact /></span>
           <button onClick={onClose} className="rounded p-1 text-slate-500 hover:bg-slate-100" aria-label={t('Close')}>✕</button>
         </div>
         <div className="space-y-3 p-4">{children}</div>

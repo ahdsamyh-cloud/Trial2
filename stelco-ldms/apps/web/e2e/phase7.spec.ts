@@ -46,7 +46,7 @@ test('Dhivehi keyboard types Thaana into a field, and the field runs right-to-le
   await page.getByRole('row', { name: /ABC Pvt Ltd v STELCO/ }).first().click();
   await page.getByRole('button', { name: 'Log update' }).click();
   const box = page.getByRole('dialog').getByLabel('Summary');
-  await page.getByRole('button', { name: /Dhivehi keyboard/ }).click();
+  await page.getByRole('dialog').getByRole('button', { name: /Dhivehi keyboard/ }).click(); // the switch inside the dialog
   await box.click();
   await page.keyboard.type('salaam');
   await expect(box).toHaveValue('ސަލަަމ'); // s a l a a m in the phonetic layout
@@ -80,9 +80,9 @@ test('compliance: research tab, department report and yes/no confirmations', asy
   await login(page, 'uh.cmp');
   await page.goto('/compliance');
   await page.getByRole('tab', { name: 'Research' }).click();
-  await expect(page.getByText('Research of laws')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Research of laws' })).toBeVisible();
   await page.getByRole('tab', { name: 'Department report' }).click();
-  await expect(page.getByText('Compliance by department')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Compliance by department' })).toBeVisible();
   await page.getByRole('tab', { name: 'Department confirmations' }).click();
   await expect(page.getByRole('button', { name: 'Send reminders now' })).toBeVisible();
 });
