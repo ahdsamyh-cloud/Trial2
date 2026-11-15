@@ -106,7 +106,9 @@ console.log('Starting the embedded PostgreSQL database (first start takes a litt
 const db = await PGlite.create({ dataDir: join(dataDir, 'db'), extensions: { pg_trgm } });
 const server = new PGLiteSocketServer({ db, port: DB_PORT, host: '127.0.0.1', maxConnections: 4 });
 await server.start();
-const dbUrl = `postgresql://${APP_ROLE}:local@127.0.0.1:${DB_PORT}/postgres?sslmode=disable`;
+// pgbouncer=true: no named prepared statements. PGlite has ONE database session shared by every
+// client connection, so names like "s0" left by one connection (e.g. the seed) would collide with the next.
+const dbUrl = `postgresql://${APP_ROLE}:local@127.0.0.1:${DB_PORT}/postgres?sslmode=disable&pgbouncer=true`;
 
 async function shutdown(code = 0) {
   if (stopping) return;
@@ -177,7 +179,7 @@ try {
   // ------------------------------------------------------------ 4. restricted role (RLS applies)
   // PGlite has a single database session. From here on every query from the API runs as ldms_app,
   // which has no owner/superuser rights, so FORCE ROW LEVEL SECURITY is enforced as in production.
-  await db.exec(`SET ROLE ${APP_ROLE}`);
+  await db.exec(`DEALLOCATE ALL; SET ROLE ${APP_ROLE}`);
   const who = (await db.query('SELECT current_user AS u')).rows[0].u;
   if (who !== APP_ROLE) throw new Error(`database session is "${who}", expected ${APP_ROLE}`);
 
