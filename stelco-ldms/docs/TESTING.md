@@ -26,6 +26,7 @@ Run these from the `stelco-ldms` folder.
 | `pnpm typecheck` | The code compiles with no type errors. | — | ~30 s |
 | `pnpm test` | **Unit tests** (37): business-day calendar and SLA maths, permissions, password rules, file-type checks, encryption, redirect guard. | nothing running | ~10 s |
 | `pnpm test:int` | **API integration tests** (81). Each test sends real requests to the API, backed by real Postgres, Redis and ClamAV. They cover every unit's workflow, access rules (other unit, other department, restricted matters → 404), audit log, uploads and virus blocking, retention, and key rotation. | Docker services running | ~1–2 min |
+| `pnpm test:int:single` | The same 81 integration tests with a **one-connection** database pool. Fails if any code takes a second connection while holding a transaction, which deadlocks under load. | Docker services running | ~1–2 min |
 | `pnpm test:e2e` | **Browser tests** (18). Playwright drives Chrome as real users: sign-in with 6-digit code, intake, litigation, drafting, compliance, awareness QR check-in, dashboards, CSP and accessibility (WCAG 2.1 AA). Covers desktop and phone layouts. | `pnpm dev` running in **another window**, and browsers installed once with `pnpm e2e:install` | ~2–3 min |
 
 **Notes:**

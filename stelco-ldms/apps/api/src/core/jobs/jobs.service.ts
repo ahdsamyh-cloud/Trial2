@@ -4,6 +4,7 @@ import { config } from '../../config';
 import { redis } from '../../common/redis';
 import { runAsSystem } from '../../common/context';
 import { logger } from '../../common/logger';
+import { onCommit } from '../../common/prisma.service';
 
 export type JobHandler = (data: any) => Promise<unknown>;
 export const QUEUE_NAME = 'ldms';
@@ -34,7 +35,16 @@ export class JobsService implements OnModuleDestroy {
     return this.queue;
   }
 
+  /**
+   * Queue a job. Inside a transaction the job is only queued once it COMMITS, so a worker never
+   * starts on data that is not yet visible (or that is rolled back); inline jobs likewise run
+   * after the commit instead of on a second connection while the transaction is open.
+   */
   async enqueue(name: string, data: Record<string, unknown> = {}, opts: { delayMs?: number; jobId?: string } = {}) {
+    await onCommit(() => this.enqueueNow(name, data, opts));
+  }
+
+  private async enqueueNow(name: string, data: Record<string, unknown>, opts: { delayMs?: number; jobId?: string }) {
     if (config().QUEUE_INLINE) {
       const h = this.handlers.get(name);
       if (!h) throw new Error(`No handler for job ${name}`);

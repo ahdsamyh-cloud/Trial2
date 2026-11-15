@@ -2,7 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { logger } from '../../common/logger';
 import { JobsService } from '../jobs/jobs.service';
 import { createHash } from 'node:crypto';
-import { PrismaService } from '../../common/prisma.service';
+import { onCommit, onTxEnd, PrismaService } from '../../common/prisma.service';
 import { ctx } from '../../common/context';
 
 const SENSITIVE_KEY = /(Enc|Hash|password|secret|token|bodyText|bodyHtml|extractedText)$/i;
@@ -66,6 +66,15 @@ export class AuditService implements OnModuleInit {
     const before = entry.before === undefined ? null : canonicalize(entry.before);
     const after = entry.after === undefined ? null : canonicalize(entry.after);
     const meta = entry.meta === undefined ? null : canonicalize(entry.meta);
+    // Called inside a business transaction: never take a second connection while it is open.
+    // SUCCESS entries are appended once it COMMITS (a rolled-back action leaves no false record);
+    // DENIED/FAILURE entries are appended when it ends either way, so they survive a rollback.
+    const append = () => this.append(c, { ...entry, actorId, actorName }, before, after, meta);
+    if ((entry.outcome ?? 'SUCCESS') === 'SUCCESS') await onCommit(append); else await onTxEnd(append);
+  }
+
+  private async append(c: ReturnType<typeof ctx>, entry: AuditEntry & { actorId: string | null; actorName: string | null }, before: unknown, after: unknown, meta: unknown): Promise<void> {
+    const { actorId, actorName } = entry;
     await this.prisma.base.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(74210001)`;
       const last = await tx.auditLog.findFirst({ orderBy: { seq: 'desc' }, select: { hash: true } });

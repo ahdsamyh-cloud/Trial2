@@ -21,6 +21,7 @@
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
     "test:int": "pnpm --filter api test:int",
+    "test:int:single": "pnpm --filter api test:int:single",
     "test:e2e": "pnpm --filter web test:e2e",
     "e2e:install": "pnpm --filter web exec playwright install chromium",
     "db:migrate": "pnpm --filter api prisma:migrate",

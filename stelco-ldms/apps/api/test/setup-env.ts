@@ -30,6 +30,12 @@ const b32 = (bytes: Buffer) => {
 };
 
 process.env.NODE_ENV = 'test';
+// TEST_SINGLE_CONNECTION=1: run the API with a ONE-connection pool (like the local edition on PGlite).
+// Any code that opens a second connection while holding a transaction then fails loudly.
+if (process.env.TEST_SINGLE_CONNECTION === '1' && !/connection_limit=/.test(process.env.DATABASE_URL!)) {
+  process.env.DATABASE_URL += `${process.env.DATABASE_URL!.includes('?') ? '&' : '?'}connection_limit=1&pool_timeout=10`;
+  process.env.DB_TX_MAX_WAIT_MS ??= '10000';
+}
 process.env.REDIS_URL ??= 'redis://localhost:6379/5';
 process.env.APP_ORIGIN = 'http://localhost:3000';
 process.env.FIELD_KEYS ??= `k1:${randomBytes(32).toString('base64')},k0:${randomBytes(32).toString('base64')}`;
