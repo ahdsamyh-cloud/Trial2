@@ -14,3 +14,4 @@ test-results/
 tsconfig.tsbuildinfo
 /var/
 dist-tools/
+dist-local/

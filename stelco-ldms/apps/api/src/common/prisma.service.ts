@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { ctx } from './context';
+import { config } from '../config';
 
 /** Session settings that drive the RLS policies in prisma/sql/03_rls.sql. */
 function rlsSettings(): [string, string, string] {
@@ -50,7 +51,7 @@ export class PrismaService implements OnModuleDestroy {
     return this.base.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.ctx', ${c}, true), set_config('app.user_id', ${uid}, true), set_config('app.is_hod', ${hod}, true)`;
       return fn(tx);
-    }, { timeout: opts?.timeout ?? 20000 });
+    }, { timeout: opts?.timeout ?? 20000, maxWait: config().DB_TX_MAX_WAIT_MS });
   }
 
   async onModuleDestroy() {

@@ -40,6 +40,20 @@ Demo users (dev/test only): password `DEMO_PASSWORD`, all share TOTP secret `DEM
 
 ## Notes / decisions
 - Prisma 6 (stable) rather than 7; zod 4; Next 15; Node 22 LTS; Vitest 4.
+- **Local edition** (`pnpm build:local` → `dist-local/stelco-ldms-local/`, plain npm, Node only).
+  - **Launcher** (`local/start.mjs`):
+    - runs PGlite (embedded Postgres 18 WASM) behind `@electric-sql/pglite-socket` on 127.0.0.1;
+    - applies migrations (recorded in `_prisma_migrations`) and `prisma/sql/*`, and seeds once;
+    - then `SET ROLE ldms_app` on the single PGlite session, so RLS applies (PGlite ignores the connecting user name);
+    - starts the API with `DATABASE_URL=...connection_limit=1` plus local-only settings, then the Next standalone server.
+  - **Local-only settings:**
+    - `REDIS_URL=memory` (`kv()` stand-in);
+    - `QUEUE_INLINE`;
+    - `LOCAL_SCHEDULER` (recurring jobs in-process, `core/jobs/schedules.ts`);
+    - `AV_MODE=eicar` (EICAR-only);
+    - `DB_TX_MAX_WAIT_MS`.
+  - **Production refuses** every local-only setting (`config.ts`).
+  - **Build packaging** (`scripts/build-local.mjs`): flattens the web `node_modules` and resolves every symlink, because Windows unzip doesn't restore them.
 - **No credentials in the repo**, not even for tests: test keys and demo logins are generated per run (`test/setup-env.ts`, CI "Generate per-run test secrets"); dev compose reads `infra/.env`.
 - Query strings: read with `qs()` / `qrec(query, ['k1','k2'])` (named keys only). Post-login redirects: `safeRedirectPath()` from `@ldms/shared`.
 - pnpm supply-chain settings (`pnpm-workspace.yaml`): 7-day `minimumReleaseAge`, `trustPolicy: no-downgrade`, `blockExoticSubdeps`. The `minimumReleaseAgeExclude` entries are temporary (see comment).

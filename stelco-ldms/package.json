@@ -12,6 +12,7 @@
     "start": "node scripts/dev.mjs",
     "demo:code": "pnpm --filter api demo:code",
     "build": "pnpm -r --filter ./packages/** build && pnpm --filter api build && pnpm --filter web build",
+    "build:local": "node scripts/build-local.mjs",
     "build:shared": "pnpm --filter @ldms/shared build",
     "dev:api": "pnpm --filter api dev",
     "dev:worker": "pnpm --filter api dev:worker",

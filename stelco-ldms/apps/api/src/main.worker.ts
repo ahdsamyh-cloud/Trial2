@@ -6,23 +6,7 @@ import { redis } from './common/redis';
 import { logger } from './common/logger';
 import { runAsSystem } from './common/context';
 import { JobsService, QUEUE_NAME } from './core/jobs/jobs.service';
-
-/** Recurring jobs (cron in Indian/Maldives time). */
-export const SCHEDULES: Record<string, string> = {
-  'sla.scan': '*/10 * * * *',
-  'reminders.send': '*/15 * * * *',
-  'mail.flush': '*/5 * * * *',
-  'digest.daily': '0 7 * * 0-4',
-  'digest.weekly': '0 7 * * 0',
-  'audit.verify': '30 2 * * *',
-  'lit.no-update': '0 6 * * *',
-  'cmp.cycles': '15 6 * * *',
-  'cmp.ack-reminders': '0 9 * * 0-4',
-  'cmp.findings-overdue': '30 6 * * *',
-  'drf.expiry-scan': '45 6 * * *',
-  'retention.scan': '0 3 * * 6',
-  'crypto.rotate': '0 4 * * 5',
-};
+import { SCHEDULES } from './core/jobs/schedules';
 
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn'] });

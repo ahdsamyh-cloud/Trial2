@@ -6,6 +6,7 @@ const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().default(4000),
   DATABASE_URL: z.string().min(1),
+  /** `memory` = in-process stand-in for Redis (local edition / single process only; refused in production). */
   REDIS_URL: z.string().default('redis://localhost:6379'),
   APP_ORIGIN: z.string().url().default('http://localhost:3000'),
   COOKIE_SECURE: bool,
@@ -28,7 +29,8 @@ const schema = z.object({
   S3_ACCESS_KEY: z.string().optional(),
   S3_SECRET_KEY: z.string().optional(),
   S3_FORCE_PATH_STYLE: bool,
-  AV_MODE: z.enum(['clamd', 'off']).default('clamd'),
+  /** clamd = real ClamAV. eicar = built-in check for the EICAR test file only (local edition). off = no scan. Only clamd is allowed in production. */
+  AV_MODE: z.enum(['clamd', 'eicar', 'off']).default('clamd'),
   CLAMD_HOST: z.string().default('localhost'),
   CLAMD_PORT: z.coerce.number().default(3310),
   SMTP_ENABLED: bool,
@@ -40,6 +42,10 @@ const schema = z.object({
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().default('LDMS <no-reply-legal@stelco.com.mv>'),
   QUEUE_INLINE: bool,
+  /** Run the recurring jobs (SLA scan, reminders, digests...) inside the API process (local edition, no worker). */
+  LOCAL_SCHEDULER: bool,
+  /** How long an interactive transaction may wait for a database connection (Prisma default 2000 ms). */
+  DB_TX_MAX_WAIT_MS: z.coerce.number().default(2000),
   LOGIN_DELAY_BASE_MS: z.coerce.number().default(1000),
   ADMIN_IP_ALLOWLIST: z.string().default(''),
   MAX_UPLOAD_MB: z.coerce.number().default(50),
@@ -60,8 +66,12 @@ export function config(): AppConfig {
     throw new Error(`Invalid configuration: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`);
   }
   const c = parsed.data;
+  if (c.REDIS_URL === 'memory' && !c.QUEUE_INLINE) throw new Error('REDIS_URL=memory requires QUEUE_INLINE=true (no queue without Redis)');
+  if (c.LOCAL_SCHEDULER && !c.QUEUE_INLINE) throw new Error('LOCAL_SCHEDULER requires QUEUE_INLINE=true');
   if (c.NODE_ENV === 'production') {
-    if (c.AV_MODE === 'off') throw new Error('AV_MODE=off is not allowed in production');
+    if (c.AV_MODE !== 'clamd') throw new Error(`AV_MODE=${c.AV_MODE} is not allowed in production`);
+    if (c.REDIS_URL === 'memory') throw new Error('REDIS_URL=memory is not allowed in production');
+    if (c.LOCAL_SCHEDULER) throw new Error('LOCAL_SCHEDULER is not allowed in production (run the worker)');
     if (!c.COOKIE_SECURE) throw new Error('COOKIE_SECURE must be true in production');
     if (c.QUEUE_INLINE) throw new Error('QUEUE_INLINE is not allowed in production');
   }

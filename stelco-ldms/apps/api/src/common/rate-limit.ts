@@ -1,13 +1,13 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
-import { redis } from './redis';
+import { kv } from './redis';
 
 /** Fixed-window limiter in Redis. Returns true if allowed. */
 export async function hit(key: string, limit: number, windowSec: number): Promise<boolean> {
   const k = `rl:${key}:${Math.floor(Date.now() / 1000 / windowSec)}`;
-  const n = await redis().incr(k);
-  if (n === 1) await redis().expire(k, windowSec + 1);
+  const n = await kv().incr(k);
+  if (n === 1) await kv().expire(k, windowSec + 1);
   return n <= limit;
 }
 

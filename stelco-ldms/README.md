@@ -13,6 +13,18 @@ A secure, on-premises web app for STELCO's Legal Department, covering Litigation
 
 **Stack:** Next.js (App Router, BFF proxy, nonce CSP) · NestJS + BullMQ worker · PostgreSQL 17 + Prisma + row-level security · Redis · S3-compatible storage · ClamAV · Tesseract OCR · Docker Compose behind Nginx + ModSecurity CRS.
 
+## Local edition: try it with Node.js only
+
+To **look at and test** the app on one PC with **only Node.js 22+** installed (no Docker, PostgreSQL, Redis, ClamAV or pnpm), use the *local edition* zip. Unzip it, then run `npm install` and `npm start`. Its own `README.txt` explains the rest.
+
+The local edition is the same application code. The only differences:
+- **Database:** PostgreSQL is embedded (PGlite) instead of a server.
+- **Background services:** jobs and rate limits run inside the API process instead of Redis.
+- **Antivirus:** only the EICAR test file is detected.
+- **Email and OCR:** both are off.
+
+Developers build it with `pnpm build:local`, which creates `dist-local/stelco-ldms-local/`. It is not for production.
+
 ## Quick start (local development: Windows, macOS or Linux)
 
 This project uses **pnpm** (not npm) and needs PostgreSQL, Redis and ClamAV, which run in Docker.

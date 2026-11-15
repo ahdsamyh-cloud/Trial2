@@ -3,6 +3,10 @@ import { Socket } from 'node:net';
 import { config } from '../../config';
 import { logger } from '../../common/logger';
 
+/** The standard, harmless antivirus test string (eicar.org). */
+// Built from two halves so this source/bundle is never itself mistaken for the test file by an antivirus.
+const EICAR = Buffer.from('X5O!P%@AP[4\\PZX54(P^)7CC)7}$' + 'EICAR-STANDARD-ANTIVIRUS-TEST-FILE!H+H*');
+
 export interface ScanResult { status: 'CLEAN' | 'INFECTED' | 'ERROR'; detail?: string }
 
 /** ClamAV clamd INSTREAM client (TCP, internal network only). */
@@ -10,6 +14,12 @@ export interface ScanResult { status: 'CLEAN' | 'INFECTED' | 'ERROR'; detail?: s
 export class AvService {
   async scan(buf: Buffer): Promise<ScanResult> {
     const c = config();
+    if (c.AV_MODE === 'eicar') {
+      // Local edition without ClamAV: recognises ONLY the standard EICAR test file, so the
+      // "infected upload is blocked" path can be tried. This is not a virus scanner.
+      logger.warn('AV_MODE=eicar: only the EICAR test signature is detected (local edition only)');
+      return buf.includes(EICAR) ? { status: 'INFECTED', detail: 'Eicar-Test-Signature' } : { status: 'CLEAN', detail: 'eicar-only' };
+    }
     if (c.AV_MODE === 'off') {
       logger.warn('AV_MODE=off: upload marked clean without scanning (development only)');
       return { status: 'CLEAN', detail: 'scan-disabled' };
