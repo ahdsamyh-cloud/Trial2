@@ -88,13 +88,33 @@ Tick each scenario when it behaves as described.
   4. **Import**.
   5. Then roll back the import batch.
 
+### C2. Hearings: chit, postponement, continuance (`lo.lit1`, `uh.lit`)
+- [ ] On a hearing: **Edit hearing** → type the **Hearing chit summary**. It shows on the hearing.
+- [ ] **Documents (chit, continuance…)** → upload the chit (type "Hearing chit"). It is listed on that hearing.
+- [ ] **Postpone** → new date + reason. The hearing shows "Postponed: reason → new date" and a new hearing appears.
+- [ ] **Request continuance** → then **Record continuance decision**: Granted moves the hearing to the new date; Denied keeps it.
+- [ ] **Edit summary** on a hearing that already has one.
+- [ ] Sign in as `lo.lit2` (not assigned) and edit a case: it works, and **Change history** (bottom of the page) shows who changed what, with the old and new value.
+
+### C3. Dhivehi
+- [ ] Click **ދިވެހި** in the top bar (or Ctrl+Shift+D) and type in any field: Thaana letters appear, written right to left. Click again to go back to English.
+- [ ] Text saved in Dhivehi shows right to left everywhere (case, hearing, comments).
+
 ### D. Drafting (`uh.drf`, `lo.drf1`, `lo.drf2`)
 - [ ] Register a drafting request and assign `lo.drf1` as drafter and `lo.drf2` as reviewer.
 - [ ] `lo.drf1`: **Start drafting**, upload a draft, **Submit for review**. The drafter **cannot** review their own work.
 - [ ] `lo.drf2` reviews, then `uh.drf` approves. Approval needs a FINAL document version.
 - [ ] Check the contract repository (expiry and notice dates on the calendar), the power-of-attorney register and the opinions archive search.
+- [ ] As `hod`, on a request that is "In drafting": **Submit for review** is available (it is recorded as done on behalf of the drafter).
+- [ ] On a closed request: **Start a new version**. The new request shows **Versions of this request** with the earlier one(s) and their documents.
+- [ ] Policy review: upload a draft, then comment choosing **About document version**. The comment shows which version it is about.
+- [ ] **External lawyers** → **Send to external lawyer** (firm, work, due date) → later **Mark received**. Overdue ones are flagged.
 
 ### E. Compliance (`lo.cmp1`, `uh.cmp`, `req.fin`)
+- [ ] `uh.cmp` (or `hod`): open a law → **Assign research** to `lo.cmp1` with a due date.
+- [ ] `lo.cmp1`: **Research** tab shows it. On the law: add obligations with their departments, then **Write findings / complete**.
+- [ ] `req.fin`: **Obligations to confirm** → answer **Yes, we comply** or **No, not yet**. "No" items are reminded weekly; when everything is "Yes" the checklist is completed.
+- [ ] `uh.cmp`: **Department report** tab → numbers per department → **Export to Excel**.
 - [ ] `lo.cmp1`: add a law or regulation, then **Send circular** to Finance.
 - [ ] `req.fin`: open the circular and click **I have read this**. The acknowledgement shows for `lo.cmp1`.
 - [ ] Periodic checks:
@@ -107,6 +127,11 @@ Tick each scenario when it behaves as described.
 - [ ] Create a session. Presenters are notified, and a materials deadline appears 5 business days before the session.
 - [ ] **Open QR check-in**, then open the check-in link in an incognito window (no account). Check in with a staff number, then **Send feedback**. Attendance updates.
 - [ ] Publish a bulletin or FAQ entry. Everyone can read it.
+
+### G2. Reports in your own format (`hod`)
+- [ ] **Reports** → **Placeholders & samples** → download a sample Excel; put placeholders like `{{report.period}}` and `{{lit.hearings.date}}` in your own Excel or Word format.
+- [ ] **My report formats** → **Upload a format** → choose Weekly/Monthly → **Generate**. The file comes back filled with this week's / month's data.
+- [ ] **Standard report** tab: weekly, monthly or annual, for one unit or all, as PDF or Excel.
 
 ### G. Dashboards, search, reports
 - [ ] `hod`: the HoD dashboard shows open matters by unit, SLA status and overdue items. Global search finds matters and documents.

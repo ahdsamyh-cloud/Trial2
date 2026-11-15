@@ -72,6 +72,12 @@ WHAT TO TRY
     * Virus scanning: only the standard EICAR antivirus TEST file is recognised and
       blocked (to show the feature). Real virus scanning needs ClamAV (production).
     * Text recognition (OCR) of scanned PDFs is off.
+  New in this version: hearing chit summary / postpone / continuance with documents
+  on each hearing; edit every field with a change history; HoD can submit drafts
+  for review; drafting versions, policy comments, external lawyers; compliance
+  research + department yes/no confirmations + department report; weekly/monthly
+  reports in your own Excel/Word formats (Reports menu); Dhivehi keyboard (ދިވެހި
+  button at the top, or Ctrl+Shift+D).
   Everything else - all four units, workflows, deadlines (Sun-Thu business days),
   dashboards, search, reports, Excel import/export, access rules, row-level
   security in the database and the audit log - is the real application code.

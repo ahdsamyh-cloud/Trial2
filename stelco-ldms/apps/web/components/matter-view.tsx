@@ -176,7 +176,7 @@ export function ChangeHistory({ matterId }: { matterId: string }) {
                 <div className="text-xs text-slate-500">{fmtDateTime(r.at)} · {r.who} · {label(r.action.replace(/\./g, ' '))}{r.entityType && r.entityType !== 'Matter' ? ` (${label(r.entityType)})` : ''}</div>
                 {r.changes.length ? (
                   <ul className="mt-1 space-y-0.5">
-                    {r.changes.map((c) => <li key={c.field}><span className="font-medium">{label(c.field)}</span>: <span className="text-slate-500 line-through">{show(c.before)}</span> → <span>{show(c.after)}</span></li>)}
+                    {r.changes.map((c) => <li key={c.field}><span className="font-medium">{label(c.field.replace(/([a-z])([A-Z])/g, '$1_$2'))}</span>: <span className="text-slate-500 line-through">{show(c.before)}</span> → <span>{show(c.after)}</span></li>)}
                   </ul>
                 ) : null}
               </li>
