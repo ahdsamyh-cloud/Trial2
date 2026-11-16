@@ -54,7 +54,7 @@ export type DraftingStatus = (typeof DRAFTING_STATUSES)[number];
 export type DraftingAction =
   | 'register' | 'assign' | 'start' | 'request_info' | 'info_received' | 'submit_review' | 'return_correction'
   | 'mark_reviewed' | 'send_for_approval' | 'approve' | 'escalate_hod' | 'hod_approve' | 'return_from_approval'
-  | 'send' | 'require_follow_up' | 'close' | 'cancel' | 'reject';
+  | 'send' | 'require_follow_up' | 'close' | 'cancel' | 'reject' | 'skip_review' | 'complete';
 
 export const DRAFTING_OPEN: DraftingStatus[] = DRAFTING_STATUSES.filter((s) => !['CLOSED', 'CANCELLED', 'REJECTED'].includes(s));
 
@@ -64,11 +64,15 @@ export const draftingMachine: Machine<DraftingStatus, DraftingAction> = {
   terminal: ['CLOSED', 'CANCELLED', 'REJECTED'],
   transitions: [
     { action: 'register', from: ['RECEIVED'], to: 'REGISTERED', perm: 'intake:triage', label: 'Register' },
-    { action: 'assign', from: ['REGISTERED', 'ASSIGNED'], to: 'ASSIGNED', perm: 'matter:assign', label: 'Assign' },
+    // Assign at the start; at any later stage the Unit Head / HoD can reassign (the status does not change).
+    { action: 'assign', from: DRAFTING_OPEN, to: 'ASSIGNED', perm: 'matter:assign', label: 'Assign / reassign' },
+    { action: 'start', from: ['RECEIVED', 'REGISTERED'], to: 'IN_DRAFTING', perm: 'draft:draft', label: 'Start drafting' },
     { action: 'start', from: ['ASSIGNED'], to: 'IN_DRAFTING', perm: 'draft:draft', label: 'Start drafting' },
     { action: 'request_info', from: ['IN_DRAFTING', 'ASSIGNED'], to: 'AWAITING_INFO', perm: 'draft:draft', requiresComment: true, label: 'Request information' },
     { action: 'info_received', from: ['AWAITING_INFO'], to: 'IN_DRAFTING', perm: 'draft:draft', label: 'Information received' },
     { action: 'submit_review', from: ['IN_DRAFTING'], to: 'SUBMITTED_FOR_REVIEW', perm: 'draft:draft', label: 'Submit for review' },
+    // When no review is needed: straight to approval (the approver is still a different person).
+    { action: 'skip_review', from: ['IN_DRAFTING', 'RETURNED_FOR_CORRECTION', 'SUBMITTED_FOR_REVIEW'], to: 'PENDING_APPROVAL', perm: 'draft:draft', requiresComment: true, label: 'Send for approval without review' },
     { action: 'return_correction', from: ['SUBMITTED_FOR_REVIEW'], to: 'RETURNED_FOR_CORRECTION', perm: 'draft:review', requiresComment: true, label: 'Return for correction' },
     { action: 'start', from: ['RETURNED_FOR_CORRECTION'], to: 'IN_DRAFTING', perm: 'draft:draft', label: 'Resume drafting' },
     { action: 'mark_reviewed', from: ['SUBMITTED_FOR_REVIEW'], to: 'REVIEWED', perm: 'draft:review', label: 'Mark reviewed' },
@@ -79,7 +83,9 @@ export const draftingMachine: Machine<DraftingStatus, DraftingAction> = {
     { action: 'return_from_approval', from: ['PENDING_APPROVAL', 'PENDING_HOD_APPROVAL'], to: 'RETURNED_FOR_CORRECTION', perm: 'draft:approve', requiresComment: true, label: 'Return for correction' },
     { action: 'send', from: ['APPROVED'], to: 'SENT_TO_REQUESTER', perm: 'draft:draft', label: 'Send to requester' },
     { action: 'require_follow_up', from: ['SENT_TO_REQUESTER'], to: 'FOLLOW_UP_REQUIRED', perm: 'draft:draft', label: 'Follow-up required' },
-    { action: 'close', from: ['SENT_TO_REQUESTER', 'FOLLOW_UP_REQUIRED'], to: 'CLOSED', perm: 'draft:draft', label: 'Attended / close' },
+    { action: 'close', from: ['APPROVED', 'SENT_TO_REQUESTER', 'FOLLOW_UP_REQUIRED'], to: 'CLOSED', perm: 'draft:draft', label: 'Attended / close' },
+    // Unit Head / HoD: finish the task at any stage (e.g. advice given orally, no document needed).
+    { action: 'complete', from: DRAFTING_OPEN, to: 'CLOSED', perm: 'matter:assign', requiresComment: true, label: 'Complete task' },
     { action: 'cancel', from: DRAFTING_OPEN, to: 'CANCELLED', perm: 'matter:assign', requiresComment: true, label: 'Cancel' },
     { action: 'reject', from: DRAFTING_OPEN, to: 'REJECTED', perm: 'matter:assign', requiresComment: true, label: 'Reject' },
   ],

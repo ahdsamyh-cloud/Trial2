@@ -9,7 +9,7 @@ import { DraftingService } from './drafting.service';
 import { RegistersService } from './registers.service';
 
 const id = z.string().max(40);
-const actions = ['register', 'assign', 'start', 'request_info', 'info_received', 'submit_review', 'return_correction', 'mark_reviewed', 'send_for_approval', 'approve', 'escalate_hod', 'hod_approve', 'return_from_approval', 'send', 'require_follow_up', 'close', 'cancel', 'reject'] as const;
+const actions = ['register', 'assign', 'start', 'request_info', 'info_received', 'submit_review', 'return_correction', 'mark_reviewed', 'send_for_approval', 'approve', 'escalate_hod', 'hod_approve', 'return_from_approval', 'send', 'require_follow_up', 'close', 'cancel', 'reject', 'skip_review', 'complete'] as const;
 const tags = z.array(z.string().trim().min(1).max(40)).max(20).default([]);
 
 @Controller('drafting')

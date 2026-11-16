@@ -47,7 +47,11 @@ export function DraftingPanel({ m, reloadMatter }: { m: MatterDetail; reloadMatt
   const idx = STEPS.indexOf(current);
 
   const run = (a: { action: string; label: string; requiresComment: boolean }) => {
-    if (a.requiresComment || a.action === 'assign' || a.action === 'require_follow_up' || a.action === 'approve' || a.action === 'hod_approve') { setForm({ comment: '', assigneeId: '', reviewerId: '', followUpDate: '' }); setPending(a); return; }
+    if (a.requiresComment || a.action === 'assign' || a.action === 'require_follow_up' || a.action === 'approve' || a.action === 'hod_approve') {
+      // Reassigning: start from the people assigned now.
+      const cur = (role: string) => m.assignments.find((x) => x.role === role)?.user.id ?? '';
+      setForm({ comment: '', assigneeId: a.action === 'assign' ? cur('ASSIGNEE') : '', reviewerId: a.action === 'assign' ? cur('REVIEWER') : '', followUpDate: '' }); setPending(a); return;
+    }
     void act.run(async () => { await api.post(`/drafting/requests/${m.id}/actions`, { action: a.action }); await reload(); await reloadMatter(); });
   };
   const submit = () => act.run(async () => {
@@ -162,6 +166,9 @@ export function DraftingPanel({ m, reloadMatter }: { m: MatterDetail; reloadMatt
           <UserSelect unit="DRF" labelText={t('Lawyer (maker)')} value={form.assigneeId} onChange={(v) => setForm({ ...form, assigneeId: v })} />
           <UserSelect unit="DRF" labelText={t('Reviewer (checker)')} exclude={[form.assigneeId]} value={form.reviewerId} onChange={(v) => setForm({ ...form, reviewerId: v })} />
         </> : null}
+        {pending?.action === 'assign' && !['RECEIVED', 'REGISTERED', 'ASSIGNED'].includes(m.status) ? <p className="text-sm text-slate-600">{t('Reassigning keeps the request at its current stage. The new people are notified; a review in progress moves to the new reviewer.')}</p> : null}
+        {pending?.action === 'skip_review' ? <p className="text-sm text-slate-600">{t('No review: the request goes straight to the Unit Head (or HoD) for approval. Say why a review is not needed.')}</p> : null}
+        {pending?.action === 'complete' ? <p className="text-sm text-slate-600">{t('Closes the task now, at this stage (for example advice given, or the work was finished outside the system). Say what was done.')}</p> : null}
         {pending?.action === 'approve' || pending?.action === 'hod_approve' ? <Alert tone="blue">{t('Make sure the final version is uploaded with stage "Final".')}</Alert> : null}
         {pending?.action === 'require_follow_up' ? <Field label={t('Follow-up date')} required>{(id) => <Input id={id} type="date" value={form.followUpDate} onChange={(e) => setForm({ ...form, followUpDate: e.target.value })} />}</Field> : null}
         <Field label={pending?.requiresComment ? t('Reason / comments') : t('Comment (optional)')} required={pending?.requiresComment}>{(id) => <Textarea id={id} value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} />}</Field>

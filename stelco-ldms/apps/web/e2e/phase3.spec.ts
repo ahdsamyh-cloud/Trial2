@@ -13,7 +13,7 @@ test('drafting: register, assign maker and checker, and the drafter cannot revie
   await dlg.getByLabel('Request type').selectOption({ label: 'NDA / confidentiality agreement' });
   await dlg.getByRole('button', { name: 'Register' }).click();
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
-  await page.getByRole('button', { name: 'Assign', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Assign / reassign', exact: true }).first().click();
   const a = page.getByRole('dialog');
   await a.getByLabel('Lawyer (maker)').selectOption({ label: 'Mohamed Shiyam' });
   await a.getByLabel('Reviewer (checker)').selectOption({ label: 'Hawwa Nisha' });

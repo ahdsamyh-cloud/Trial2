@@ -7,6 +7,7 @@ import { fmtDate, label } from '@/lib/format';
 import { t } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth';
 import { HeatMap } from '@/components/heatmap';
+import { UserSelect } from '@/components/parts';
 import { Alert, Badge, Button, Card, Empty, Field, Input, Modal, PageHeader, Select, Stat, StatusBadge, Tabs, Textarea } from '@/components/ui';
 
 type Dept = { id: string; name: string };
@@ -49,6 +50,8 @@ function Dashboard() {
 
 function Laws() {
   const { can } = useAuth();
+  const manager = useCmpManager();
+  const [assignFor, setAssignFor] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const { data, reload } = useApi<{ id: string; title: string; type: string; status: string; effectiveOn: string | null; regulator: { name: string } | null; _count: { obligations: number } }[]>(`/compliance/laws?q=${encodeURIComponent(q)}`, [q]);
   const regs = useApi<{ id: string; name: string }[]>('/config/regulators');
@@ -63,10 +66,16 @@ function Laws() {
       {!data?.length ? <Empty>{t('No laws registered')}</Empty> : <ul className="divide-y">{data.map((l) => (
         <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
           <Link href={`/compliance/laws/${l.id}`} className="font-medium hover:underline">{l.title}</Link>
-          <span className="flex items-center gap-2 text-xs"><Badge>{label(l.type)}</Badge>{l.regulator?.name ?? ''} · {t('effective')} {fmtDate(l.effectiveOn)} · {t('{n} obligations', { n: l._count.obligations })}<StatusBadge value={l.status} /></span>
+          <span className="flex items-center gap-2 text-xs"><Badge>{label(l.type)}</Badge>{l.regulator?.name ?? ''} · {t('effective')} {fmtDate(l.effectiveOn)} · {t('{n} obligations', { n: l._count.obligations })}<StatusBadge value={l.status} />
+            {manager ? <Button size="sm" variant="ghost" onClick={() => setAssignFor(l.id)}>{t('Assign research')}</Button> : null}</span>
         </li>
       ))}</ul>}
-      <Modal open={!!edit} wide title={t('Add law or regulation')} onClose={() => setEdit(null)} footer={<Button busy={act.busy} onClick={() => act.run(async () => { await api.post('/compliance/laws', { title: edit!.title, type: edit!.type, regulatorId: edit!.regulatorId || null, effectiveOn: edit!.effectiveOn ? new Date(`${edit!.effectiveOn}T00:00:00+05:00`).toISOString() : null, sourceUrl: edit!.sourceUrl || null, summary: edit!.summary || null }); setEdit(null); await reload(); })}>{t('Save')}</Button>}>
+      <AssignResearch open={!!assignFor} lawId={assignFor ?? undefined} onClose={() => setAssignFor(null)} onDone={() => void reload()} />
+      <Modal open={!!edit} wide title={t('Add law or regulation')} onClose={() => setEdit(null)} footer={<Button busy={act.busy} onClick={() => act.run(async () => {
+        const law = await api.post<{ id: string }>('/compliance/laws', { title: edit!.title, type: edit!.type, regulatorId: edit!.regulatorId || null, effectiveOn: edit!.effectiveOn ? new Date(`${edit!.effectiveOn}T00:00:00+05:00`).toISOString() : null, sourceUrl: edit!.sourceUrl || null, summary: edit!.summary || null });
+        if (edit!.researcherId) await api.post(`/compliance/laws/${law.id}/research`, { assigneeId: edit!.researcherId, dueAt: edit!.researchDue ? new Date(`${edit!.researchDue}T16:00:00+05:00`).toISOString() : null });
+        setEdit(null); await reload();
+      })}>{t('Save')}</Button>}>
         {edit ? <div className="grid gap-3 sm:grid-cols-2">
           <div className="sm:col-span-2"><Field label={t('Title')}>{(id) => <Input id={id} value={edit.title} onChange={(e) => setEdit({ ...edit, title: e.target.value })} />}</Field></div>
           <Field label={t('Type')}>{(id) => <Select id={id} value={edit.type} onChange={(e) => setEdit({ ...edit, type: e.target.value })} options={['ACT', 'REGULATION', 'CIRCULAR', 'GUIDELINE', 'DIRECTIVE'].map((x) => ({ value: x, label: label(x) }))} />}</Field>
@@ -74,6 +83,10 @@ function Laws() {
           <Field label={t('Effective date')}>{(id) => <Input id={id} type="date" value={edit.effectiveOn} onChange={(e) => setEdit({ ...edit, effectiveOn: e.target.value })} />}</Field>
           <Field label={t('Source link')}>{(id) => <Input id={id} type="url" value={edit.sourceUrl} onChange={(e) => setEdit({ ...edit, sourceUrl: e.target.value })} />}</Field>
           <div className="sm:col-span-2"><Field label={t('Summary')}>{(id) => <Textarea id={id} value={edit.summary} onChange={(e) => setEdit({ ...edit, summary: e.target.value })} />}</Field></div>
+          {manager ? <>
+            <UserSelect unit="CMP" labelText={t('Assign research to (optional)')} value={edit.researcherId ?? ''} onChange={(v) => setEdit({ ...edit, researcherId: v })} />
+            <Field label={t('Research due date')}>{(id) => <Input id={id} type="date" value={edit.researchDue ?? ''} onChange={(e) => setEdit({ ...edit, researchDue: e.target.value })} />}</Field>
+          </> : null}
         </div> : null}
       </Modal>
     </Card>
@@ -151,18 +164,66 @@ function Checks() {
   );
 }
 
-function Research() {
-  const [mine, setMine] = useState(false);
-  const { data } = useApi<{ id: string; title: string; type: string; researchStatus: string; assigneeName: string | null; researchDueAt: string | null; researchCompletedAt: string | null; overdue: boolean; _count: { obligations: number } }[]>(`/compliance/research?mine=${mine}`, [mine]);
+/** HoD / Compliance Unit Head. */
+function useCmpManager() {
+  const { me } = useAuth();
+  return !!me?.roles.some((r) => r.role === 'HOD' || (r.role === 'UNIT_HEAD' && r.unit === 'CMP'));
+}
+
+/**
+ * Assign (or reassign) research of a law to a Compliance lawyer. With no law chosen, a new law is
+ * registered first (title + type), so a newly issued law can be handed out in one step.
+ */
+function AssignResearch({ open, lawId, onClose, onDone }: { open: boolean; lawId?: string; onClose: () => void; onDone: () => void }) {
+  const laws = useApi<{ id: string; title: string }[]>(open && !lawId ? '/compliance/laws' : null, [open]);
+  const [f, setF] = useState({ lawId: '', title: '', type: 'ACT', assigneeId: '', dueAt: '', note: '' });
+  const act = useAction();
+  const newLaw = !lawId && !f.lawId;
+  const save = () => act.run(async () => {
+    let id = lawId || f.lawId;
+    if (!id) id = (await api.post<{ id: string }>('/compliance/laws', { title: f.title, type: f.type })).id;
+    await api.post(`/compliance/laws/${id}/research`, { assigneeId: f.assigneeId, dueAt: f.dueAt ? new Date(`${f.dueAt}T16:00:00+05:00`).toISOString() : null, note: f.note || null });
+    setF({ lawId: '', title: '', type: 'ACT', assigneeId: '', dueAt: '', note: '' });
+    onDone(); onClose();
+  });
   return (
-    <Card title={t('Research of laws')} actions={<label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} />{t('Only mine')}</label>}>
-      <p className="mb-2 text-xs text-slate-500">{t('The HoD or Unit Head assigns research from a law’s page. The lawyer adds the obligations and their departments, then completes the research.')}</p>
-      {!data?.length ? <Empty>{t('No research assigned')}</Empty> : <ul className="divide-y text-sm">{data.map((r) => (
-        <li key={r.id}><Link href={`/compliance/laws/${r.id}`} className="flex flex-wrap items-center justify-between gap-2 py-2 hover:bg-slate-50">
-          <span><span className="font-medium">{r.title}</span> <span className="text-xs text-slate-500">· {r.assigneeName ?? '—'} · {t('{n} obligations', { n: r._count.obligations })}</span></span>
-          <span className="flex items-center gap-2 text-xs"><span className={r.overdue ? 'font-semibold text-red-700' : ''}>{t('due')} {fmtDate(r.researchDueAt)}</span><StatusBadge value={r.researchStatus} /></span>
-        </Link></li>
+    <Modal open={open} title={lawId ? t('Assign / reassign research') : t('Assign research of a law')} onClose={onClose}
+      footer={<Button busy={act.busy} disabled={!f.assigneeId || (newLaw && f.title.trim().length < 3)} onClick={save}>{t('Assign')}</Button>}>
+      {act.error ? <Alert>{act.error}</Alert> : null}
+      {!lawId ? <>
+        <Field label={t('Law')}>{(id) => <Select id={id} value={f.lawId} onChange={(e) => setF({ ...f, lawId: e.target.value })} placeholder={t('— New law (not registered yet) —')} options={(laws.data ?? []).map((l) => ({ value: l.id, label: l.title }))} />}</Field>
+        {newLaw ? <div className="grid gap-2 sm:grid-cols-3">
+          <div className="sm:col-span-2"><Field label={t('Title of the new law')} required>{(id) => <Input id={id} value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} />}</Field></div>
+          <Field label={t('Type')}>{(id) => <Select id={id} value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })} options={['ACT', 'REGULATION', 'CIRCULAR', 'GUIDELINE', 'DIRECTIVE'].map((x) => ({ value: x, label: label(x) }))} />}</Field>
+        </div> : null}
+      </> : null}
+      <UserSelect unit="CMP" labelText={t('Lawyer')} value={f.assigneeId} onChange={(v) => setF({ ...f, assigneeId: v })} allowEmpty={false} />
+      <Field label={t('Due date')}>{(id) => <Input id={id} type="date" value={f.dueAt} onChange={(e) => setF({ ...f, dueAt: e.target.value })} />}</Field>
+      <Field label={t('Instructions')}>{(id) => <Textarea id={id} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} />}</Field>
+      <p className="text-xs text-slate-500">{t('The lawyer is notified. Reassigning moves the task to the new lawyer.')}</p>
+    </Modal>
+  );
+}
+
+function Research() {
+  const manager = useCmpManager();
+  const [assign, setAssign] = useState<{ lawId?: string } | null>(null);
+  const [mine, setMine] = useState(false);
+  const { data, reload } = useApi<{ id: string; title: string; type: string; researchStatus: string; assigneeName: string | null; researchDueAt: string | null; researchCompletedAt: string | null; overdue: boolean; _count: { obligations: number } }[]>(`/compliance/research?mine=${mine}`, [mine]);
+  return (
+    <Card title={t('Research of laws')} actions={<>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} />{t('Only mine')}</label>
+      {manager ? <Button size="sm" onClick={() => setAssign({})}>{t('Assign research')}</Button> : null}
+    </>}>
+      <p className="mb-2 text-xs text-slate-500">{t('The HoD or Unit Head assigns research of a new law to a lawyer (and can reassign it at any time). The lawyer adds the obligations and their departments, then completes the research.')}</p>
+      {!data?.length ? <Empty>{t('No research assigned')}</Empty> : <ul className="divide-y text-sm" data-testid="research-list">{data.map((r) => (
+        <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+          <Link href={`/compliance/laws/${r.id}`} className="hover:underline"><span className="font-medium">{r.title}</span> <span className="text-xs text-slate-500">· {r.assigneeName ?? '—'} · {t('{n} obligations', { n: r._count.obligations })}</span></Link>
+          <span className="flex items-center gap-2 text-xs"><span className={r.overdue ? 'font-semibold text-red-700' : ''}>{t('due')} {fmtDate(r.researchDueAt)}</span><StatusBadge value={r.researchStatus} />
+            {manager ? <Button size="sm" variant="ghost" onClick={() => setAssign({ lawId: r.id })}>{t('Reassign')}</Button> : null}</span>
+        </li>
       ))}</ul>}
+      <AssignResearch open={!!assign} lawId={assign?.lawId} onClose={() => setAssign(null)} onDone={() => void reload()} />
     </Card>
   );
 }

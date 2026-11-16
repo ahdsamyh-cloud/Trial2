@@ -25,9 +25,9 @@ Run these from the `stelco-ldms` folder.
 |---|---|---|---|
 | `pnpm typecheck` | The code compiles with no type errors. | — | ~30 s |
 | `pnpm test` | **Unit tests** (37): business-day calendar and SLA maths, permissions, password rules, file-type checks, encryption, redirect guard. | nothing running | ~10 s |
-| `pnpm test:int` | **API integration tests** (96). Each test sends real requests to the API, backed by real Postgres, Redis and ClamAV. They cover every unit's workflow, access rules (other unit, other department, restricted matters → 404), audit log, uploads and virus blocking, retention, and key rotation. | Docker services running | ~1–2 min |
-| `pnpm test:int:single` | The same 96 integration tests with a **one-connection** database pool. Fails if any code takes a second connection while holding a transaction, which deadlocks under load. | Docker services running | ~1–2 min |
-| `pnpm test:e2e` | **Browser tests** (28). Playwright drives Chrome as real users: sign-in with 6-digit code, intake, litigation, drafting, compliance, awareness QR check-in, dashboards, CSP and accessibility (WCAG 2.1 AA). Covers desktop and phone layouts. | `pnpm dev` running in **another window**, and browsers installed once with `pnpm e2e:install` | ~2–3 min |
+| `pnpm test:int` | **API integration tests** (100). Each test sends real requests to the API, backed by real Postgres, Redis and ClamAV. They cover every unit's workflow, access rules (other unit, other department, restricted matters → 404), audit log, uploads and virus blocking, retention, and key rotation. | Docker services running | ~1–2 min |
+| `pnpm test:int:single` | The same 100 integration tests with a **one-connection** database pool. Fails if any code takes a second connection while holding a transaction, which deadlocks under load. | Docker services running | ~1–2 min |
+| `pnpm test:e2e` | **Browser tests** (30). Playwright drives Chrome as real users: sign-in with 6-digit code, intake, litigation, drafting, compliance, awareness QR check-in, dashboards, CSP and accessibility (WCAG 2.1 AA). Covers desktop and phone layouts. | `pnpm dev` running in **another window**, and browsers installed once with `pnpm e2e:install` | ~2–3 min |
 
 **Notes:**
 - `pnpm test:int` uses a separate database, `ldms_test`, and **wipes it on every run**. Your dev data in `ldms` is not touched. Its settings are in `apps/api/.env.test`, which `pnpm setup:env` creates.
@@ -94,6 +94,7 @@ Tick each scenario when it behaves as described.
 - [ ] **Postpone** → new date + reason. The hearing shows "Postponed: reason → new date" and a new hearing appears.
 - [ ] **Request continuance** → then **Record continuance decision**: Granted moves the hearing to the new date; Denied keeps it.
 - [ ] **Edit summary** on a hearing that already has one.
+- [ ] `uh.lit`: **Assign** on a case at any stage → the new lawyer becomes the responsible officer (reminders go to them).
 - [ ] Sign in as `lo.lit2` (not assigned) and edit a case: it works, and **Change history** (bottom of the page) shows who changed what, with the old and new value.
 
 ### C4. Hearing reminders and judgments (`uh.lit`, `lo.lit1`)
@@ -115,6 +116,10 @@ Tick each scenario when it behaves as described.
 - [ ] `lo.drf2` reviews, then `uh.drf` approves. Approval needs a FINAL document version.
 - [ ] Check the contract repository (expiry and notice dates on the calendar), the power-of-attorney register and the opinions archive search.
 - [ ] As `hod`, on a request that is "In drafting": **Submit for review** is available (it is recorded as done on behalf of the drafter).
+- [ ] `uh.drf` (or `hod`): **Assign / reassign** is available at every stage. Reassigning keeps the stage; a review in progress moves to the new reviewer.
+- [ ] `uh.drf`: **Start drafting** on a request nobody was assigned to: the Unit Head becomes the drafter.
+- [ ] No reviewer needed: **Send for approval without review** (give the reason) goes straight to the Unit Head/HoD for approval.
+- [ ] `uh.drf` / `hod`: **Complete task** closes a request at any stage (give what was done). Lawyers do not see this button.
 - [ ] On a closed request: **Start a new version**. The new request shows **Versions of this request** with the earlier one(s) and their documents.
 - [ ] Policy review: upload a draft, then comment choosing **About document version**. The comment shows which version it is about.
 - [ ] **External lawyers** → **Send to external lawyer** (firm, work, due date) → later **Mark received**. Overdue ones are flagged.
@@ -122,7 +127,7 @@ Tick each scenario when it behaves as described.
 - [ ] On a drafting request: **Start from a template** → choose an approved template → its file is copied into Documents.
 
 ### E. Compliance (`lo.cmp1`, `uh.cmp`, `req.fin`)
-- [ ] `uh.cmp` (or `hod`): open a law → **Assign research** to `lo.cmp1` with a due date.
+- [ ] `uh.cmp` (or `hod`): **Research** tab → **Assign research** → choose an existing law or type the title of a new one → lawyer `lo.cmp1` + due date. Also possible from each law in **Laws & regulations**, and when adding a law. **Reassign** moves it to another lawyer.
 - [ ] `lo.cmp1`: **Research** tab shows it. On the law: add obligations with their departments, then **Write findings / complete**.
 - [ ] `req.fin`: **Obligations to confirm** → answer **Yes, we comply** or **No, not yet**. "No" items are reminded weekly; when everything is "Yes" the checklist is completed.
 - [ ] `uh.cmp`: **Department report** tab → numbers per department → **Export to Excel**.

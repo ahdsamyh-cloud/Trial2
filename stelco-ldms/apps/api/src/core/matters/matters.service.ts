@@ -249,6 +249,8 @@ export class MattersService {
       await t.slaClock.updateMany({ where: { matterId: id, step: 'ASSIGN', stoppedAt: null }, data: { stoppedAt: new Date() } });
       await t.slaClock.updateMany({ where: { matterId: id, stoppedAt: null, step: { notIn: ['ASSIGN', 'REVIEW', 'APPROVAL'] } }, data: { ownerId: input.assigneeIds[0] ?? null } });
       await t.matter.update({ where: { id }, data: { lastActivityAt: new Date() } });
+      // Litigation: the (first) assigned lawyer is the case's responsible officer (hearing reminders, deadlines).
+      if (m.unit === 'LIT' && input.assigneeIds[0]) await t.litigationCase.updateMany({ where: { matterId: id }, data: { responsibleOfficerId: input.assigneeIds[0] } });
       await this.audit.log({ action: 'matter.assigned', entityType: 'Matter', entityId: id, before: before.map((b) => ({ userId: b.userId, role: b.role })), after: rows.map((r) => ({ userId: r.userId, role: r.role })) });
     };
     if (tx) await run(tx); else await this.prisma.tx(run);

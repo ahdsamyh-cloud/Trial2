@@ -16,7 +16,9 @@ import { PolicyService } from '../../core/policy/policy.service';
 import { SlaService } from '../../core/sla/sla.service';
 
 /** Steps that belong to the drafter; the HoD/Unit Head may take them on the drafter's behalf. */
-const DRAFTER_STEPS: DraftingAction[] = ['start', 'request_info', 'info_received', 'submit_review', 'send', 'require_follow_up', 'close'];
+const DRAFTER_STEPS: DraftingAction[] = ['start', 'request_info', 'info_received', 'submit_review', 'skip_review', 'send', 'require_follow_up', 'close'];
+/** Statuses where `assign` is the first assignment (status -> ASSIGNED); later it is a reassignment (status unchanged). */
+const FIRST_ASSIGN = ['RECEIVED', 'REGISTERED', 'ASSIGNED'];
 
 interface HodRules { enabled: boolean; minContractValue: number | null; restricted: boolean; requestTypeCodes: string[] }
 
@@ -212,9 +214,13 @@ export class DraftingService implements OnModuleInit {
     const manage = user.isHod || unitHead;
     switch (action) {
       case 'register': return this.policy.covers('intake:triage', 'DRF', user) ? null : 'Only Legal staff can register requests';
-      case 'assign': case 'cancel': case 'reject': return manage ? null : 'Only the Unit Head or HoD can do this';
+      case 'assign': case 'cancel': case 'reject': case 'complete': return manage ? null : 'Only the Unit Head or HoD can do this';
       // The HoD and Unit Head can take any of the drafter's steps on their behalf (recorded as such).
-      case 'start': case 'request_info': case 'info_received': case 'submit_review':
+      case 'start':
+        // Starting before anyone is assigned: only the Unit Head / HoD (they become the drafter).
+        if (!drafterId) return manage ? null : 'The Unit Head assigns a lawyer first';
+        return isDrafter || manage ? null : 'Only the assigned lawyer can do this';
+      case 'request_info': case 'info_received': case 'submit_review': case 'skip_review':
         return isDrafter || manage ? null : 'Only the assigned lawyer can do this';
       case 'return_correction': case 'mark_reviewed':
         if (isDrafter) return 'The person who drafted a document cannot review it (maker-checker)';
@@ -273,7 +279,15 @@ export class DraftingService implements OnModuleInit {
       await this.matters.assign(id, { assigneeIds: [input.assigneeId], reviewerId: input.reviewerId ?? null });
     }
 
+    if (input.action === 'start' && !drafterId) {
+      // Unit Head / HoD starts an unassigned request: they become the drafter.
+      await this.matters.assign(id, { assigneeIds: [user.id], reviewerId: reviewerId ?? null });
+    }
+
     let to: DraftingStatus = t.to;
+    // Reassignment after work has started keeps the current stage.
+    const reassign = input.action === 'assign' && !FIRST_ASSIGN.includes(from);
+    if (reassign) to = from;
     let hodReason: string | null = null;
     const notify: { ids: (string | null)[]; title: string }[] = [];
     const rt = m.requestTypeId ? await this.prisma.base.requestType.findUnique({ where: { id: m.requestTypeId }, include: { slaPolicy: true } }) : null;
@@ -282,8 +296,26 @@ export class DraftingService implements OnModuleInit {
       switch (input.action) {
         case 'assign': {
           await tx.draftingRequest.update({ where: { matterId: id }, data: { drafterId: input.assigneeId, reviewerId: input.reviewerId ?? null } });
+          if (reassign) {
+            // A review in progress moves to the new reviewer.
+            const open = await tx.reviewRound.findFirst({ where: { matterId: id, decision: null }, orderBy: { round: 'desc' } });
+            if (open && input.reviewerId && open.reviewerId !== input.reviewerId) {
+              await tx.reviewRound.update({ where: { id: open.id }, data: { reviewerId: input.reviewerId } });
+              await tx.slaClock.updateMany({ where: { matterId: id, step: 'REVIEW', stoppedAt: null }, data: { ownerId: input.reviewerId } });
+              notify.push({ ids: [input.reviewerId], title: `Please review ${m.reference} (reassigned to you)` });
+            }
+          }
           if (!(await tx.slaClock.count({ where: { matterId: id, step: 'DRAFTING' } }))) {
             await this.sla.start({ policyCode: rt?.slaPolicy?.code ?? 'DRF_OTHER', step: 'DRAFTING', matterId: id, urgent: m.priority === 'URGENT', ownerId: input.assigneeId }, tx);
+          }
+          break;
+        }
+        case 'start': {
+          if (!drafterId) {
+            await tx.draftingRequest.update({ where: { matterId: id }, data: { drafterId: user.id } });
+            if (!(await tx.slaClock.count({ where: { matterId: id, step: 'DRAFTING' } }))) {
+              await this.sla.start({ policyCode: rt?.slaPolicy?.code ?? 'DRF_OTHER', step: 'DRAFTING', matterId: id, urgent: m.priority === 'URGENT', ownerId: user.id }, tx);
+            }
           }
           break;
         }
@@ -314,7 +346,13 @@ export class DraftingService implements OnModuleInit {
           if (input.action === 'return_correction') notify.push({ ids: [drafterId], title: `${m.reference} returned for correction` });
           break;
         }
+        case 'skip_review':
         case 'send_for_approval': {
+          if (input.action === 'skip_review') {
+            // No review needed: close any open review round, then route for approval exactly like "Send for approval".
+            await tx.reviewRound.updateMany({ where: { matterId: id, decision: null }, data: { decision: 'SKIPPED', comments: input.comment ?? null, decidedAt: new Date() } });
+            await tx.slaClock.updateMany({ where: { matterId: id, step: 'REVIEW', stoppedAt: null }, data: { stoppedAt: new Date() } });
+          }
           hodReason = await this.needsHod(tx, m, drafterId, reviewerId);
           const approver = hodReason ? await tx.userRole.findFirst({ where: { role: 'HOD' } }) : await tx.userRole.findFirst({ where: { role: 'UNIT_HEAD', unit: 'DRF', userId: { notIn: [drafterId, reviewerId].filter((x): x is string => !!x) } } });
           await tx.draftingRequest.update({ where: { matterId: id }, data: { approvalLevel: hodReason ? 'HOD' : 'UNIT_HEAD', escalationReason: hodReason } });
@@ -357,13 +395,17 @@ export class DraftingService implements OnModuleInit {
           await this.calendar.upsert({ kind: 'FOLLOW_UP', unit: 'DRF', title: `Follow up ${m.reference}`, sourceType: 'DraftingFollowUp', sourceId: id, startsAt: input.followUpDate, allDay: true, ownerId: drafterId, matterId: id, restricted: m.restricted }, tx);
           break;
         }
+        case 'complete':
+          notify.push({ ids: [drafterId, reviewerId], title: `${m.reference} was completed by ${user.isHod ? 'the HoD' : 'the Unit Head'}` });
+          await this.calendar.cancel('DraftingFollowUp', id, tx);
+          break;
         case 'close': case 'cancel': case 'reject':
           await this.calendar.cancel('DraftingFollowUp', id, tx);
           break;
       }
       const onBehalf = DRAFTER_STEPS.includes(input.action) && !!drafterId && drafterId !== user.id;
-      await this.matters.recordTransition(tx, id, from, to, input.action, onBehalf ? `${input.comment ? `${input.comment} ` : ''}(on behalf of the drafter by ${user.isHod ? 'the HoD' : 'the Unit Head'} ${user.username})` : input.comment);
-      if (input.action === 'send_for_approval' && hodReason) {
+      await this.matters.recordTransition(tx, id, from, to, reassign ? 'reassign' : input.action, onBehalf ? `${input.comment ? `${input.comment} ` : ''}(on behalf of the drafter by ${user.isHod ? 'the HoD' : 'the Unit Head'} ${user.username})` : input.comment);
+      if ((input.action === 'send_for_approval' || input.action === 'skip_review') && hodReason) {
         await this.matters.recordTransition(tx, id, to, 'PENDING_HOD_APPROVAL', 'auto-route-hod', hodReason);
         to = 'PENDING_HOD_APPROVAL';
       }

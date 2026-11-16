@@ -81,3 +81,37 @@ test('Dhivehi interface: switching language turns the menus into Dhivehi and the
   await expect(page.locator('html')).not.toHaveAttribute('dir', 'rtl');
   await expect(page.getByRole('link', { name: 'Reports' })).toBeVisible();
 });
+
+test('compliance: Unit Head assigns research of a new law from the Research tab', async ({ page }) => {
+  await login(page, 'uh.cmp');
+  await page.goto('/compliance');
+  await page.getByRole('tab', { name: 'Research' }).click();
+  await page.getByRole('button', { name: 'Assign research' }).click();
+  const dlg = page.getByRole('dialog');
+  const title = `Public Finance (Amendment) Regulation ${Date.now()}`;
+  await dlg.getByLabel('Title of the new law').fill(title);
+  await dlg.getByLabel('Lawyer').selectOption({ label: 'Ali Fazeel' });
+  await dlg.getByRole('button', { name: 'Assign' }).click();
+  const row = page.getByTestId('research-list').getByRole('listitem').filter({ hasText: title });
+  await expect(row).toContainText('Ali Fazeel');
+  await row.getByRole('button', { name: 'Reassign' }).click();
+  await expect(page.getByRole('dialog').getByText('Assign / reassign research')).toBeVisible();
+});
+
+test('drafting: the Unit Head can reassign at any stage and complete a task without review', async ({ page }) => {
+  await login(page, 'uh.drf');
+  await page.goto('/drafting');
+  await page.getByRole('button', { name: 'New request' }).click();
+  const dlg = page.getByRole('dialog');
+  await dlg.getByLabel('Title').fill(`Quick advice ${Date.now()}`);
+  await dlg.getByLabel('Request type').selectOption({ index: 1 });
+  await dlg.getByRole('button', { name: 'Register' }).click();
+  await expect(page.getByRole('button', { name: 'Assign / reassign' })).toBeVisible();
+  await page.getByRole('button', { name: 'Start drafting' }).click();
+  await expect(page.getByRole('button', { name: 'Send for approval without review' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Assign / reassign' })).toBeVisible(); // still possible while drafting
+  await page.getByRole('button', { name: 'Complete task' }).click();
+  await page.getByRole('dialog').getByLabel(/Reason|comments/).fill('Advice given by phone');
+  await page.getByRole('dialog').getByRole('button', { name: 'Confirm' }).click();
+  await expect(page.getByText('Closed').first()).toBeVisible();
+});

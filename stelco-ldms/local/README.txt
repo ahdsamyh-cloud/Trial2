@@ -72,7 +72,10 @@ WHAT TO TRY
     * Virus scanning: only the standard EICAR antivirus TEST file is recognised and
       blocked (to show the feature). Real virus scanning needs ClamAV (production).
     * Text recognition (OCR) of scanned PDFs is off.
-  New in this version: hearing reminders (afternoon before + morning list);
+  Latest: Unit Head/HoD can assign or reassign at any stage in every unit,
+  "Send for approval without review" and "Complete task" in Drafting, and
+  "Assign research" buttons in Compliance (Research tab and each law).
+  Also new: hearing reminders (afternoon before + morning list);
   appeal and comply-by deadlines on judgments; workload per lawyer (dashboard);
   template & clause library with approval and earlier versions ("Start from a
   template" on a drafting request); report formats sent automatically every
