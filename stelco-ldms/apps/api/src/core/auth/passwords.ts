@@ -49,10 +49,17 @@ export function dummyHash(): Promise<string> {
   return dummy;
 }
 
+/** "summer2024!" -> "summer" (linear scan; avoids a backtracking regex on user input). */
+function stripTrailingNonLetters(s: string): string {
+  let end = s.length;
+  while (end > 0 && !/[a-z]/i.test(s[end - 1]!) && !/[^\x00-\x7F]/.test(s[end - 1]!)) end--;
+  return s.slice(0, end);
+}
+
 export function checkPassword(pw: string, context: { username?: string; displayName?: string } = {}): string[] {
   const errors = passwordPolicyErrors(pw, context);
   const lower = pw.toLowerCase();
-  const stripped = lower.replace(/[\d\W_]+$/g, '');
+  const stripped = stripTrailingNonLetters(lower);
   const bl = list();
   if (bl.has(lower) || (stripped.length >= 4 && bl.has(stripped)) || bl.has(lower.replace(/\s+/g, ''))) {
     errors.push('This password is too common or has appeared in a data breach. Choose another.');

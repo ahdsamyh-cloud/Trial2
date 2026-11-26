@@ -170,7 +170,9 @@ export class IntakeService {
     this.assertAction(i, 'convert');
     // Paralegals hold intake:triage at ALL scope; Unit Heads only for their own unit.
     if (!this.policy.covers('intake:triage', input.unit)) throw forbidden('You can only convert intakes into your own unit');
-    const converter = this.converters.get(input.unit);
+    // Only the converters the unit modules registered (input.unit is a validated unit code).
+    const registered = this.converters.get(input.unit);
+    const converter = typeof registered === 'function' ? registered : undefined;
     const matter = await this.prisma.tx(async (tx) => {
       const m = converter
         ? await converter(tx, i, input)

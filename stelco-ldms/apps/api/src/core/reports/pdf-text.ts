@@ -101,10 +101,12 @@ function place(run: Run, size: number, latin: PDFFont, f: PdfFonts): Placed {
 }
 
 function swapEdgeSpaces(t: string) {
-  const lead = /^\s*/.exec(t)![0];
-  const trail = /\s*$/.exec(t)![0];
-  if (lead.length === t.length) return t;
-  return trail + t.slice(lead.length, t.length - trail.length) + lead;
+  // String trims instead of /\s*$/ (which backtracks badly on long runs of spaces).
+  const core = t.trim();
+  if (!core) return t;
+  const leadLen = t.length - t.trimStart().length;
+  const trailLen = t.length - t.trimEnd().length;
+  return t.slice(t.length - trailLen) + core + t.slice(0, leadLen);
 }
 
 /** Width of a line of mixed text. */
