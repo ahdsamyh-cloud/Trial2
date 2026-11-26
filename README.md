@@ -1,3 +1,5 @@
+> This repository also contains **RoomCraft**, a home interior and custom-furniture designer web app. See [`roomcraft/README.md`](roomcraft/README.md).
+
 # ESP32 Early Fault Detection Rig
 
 Two MPU6050 IMUs + one DHT22 temperature/humidity sensor on an ESP32,
