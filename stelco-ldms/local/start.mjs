@@ -48,6 +48,14 @@ const WEB_PORT = Number(process.env.LDMS_PORT ?? 3000);
 const API_PORT = Number(process.env.LDMS_API_PORT ?? 4000);
 const DB_PORT = Number(process.env.LDMS_DB_PORT ?? 54329);
 const APP_ROLE = 'ldms_app';
+// Optional: the public HTTPS address when LDMS is reached through a tunnel or a reverse proxy on this machine
+// (e.g. https://abc.trycloudflare.com or https://ldms.example.com). LDMS still listens on 127.0.0.1 only;
+// the tunnel/proxy forwards to it. Requests whose Origin is not this address are refused (CSRF protection).
+const PUBLIC_URL = (process.env.LDMS_PUBLIC_URL ?? '').trim().replace(/\/+$/, '');
+if (PUBLIC_URL && !/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(PUBLIC_URL)) {
+  console.error('LDMS_PUBLIC_URL must be an https:// address with no path, e.g. https://ldms.example.com');
+  process.exit(1);
+}
 
 mkdirSync(join(dataDir, 'storage'), { recursive: true });
 
@@ -155,8 +163,8 @@ try {
     NODE_ENV: 'development',
     ...secrets,
     DATABASE_URL: `${dbUrl}&connection_limit=1&pool_timeout=60`,
-    APP_ORIGIN: `http://localhost:${WEB_PORT}`,
-    COOKIE_SECURE: 'false',
+    APP_ORIGIN: PUBLIC_URL || `http://localhost:${WEB_PORT}`,
+    COOKIE_SECURE: PUBLIC_URL ? 'true' : 'false',
     TRUST_PROXY: '1',
     REDIS_URL: 'memory',
     QUEUE_INLINE: 'true',
@@ -211,14 +219,14 @@ try {
 
   console.log(`
 ==============================================================================
-  STELCO LDMS (local edition) is running:   http://localhost:${WEB_PORT}
+  STELCO LDMS (local edition) is running:   ${PUBLIC_URL || `http://localhost:${WEB_PORT}`}
 
   Username : hod  (Head of Department), or uh.lit, lo.lit1, pl.lit, req.fin,
              lo.cmp1, lo.awr1, mgmt, auditor, adm.it ...  (see README.txt)
   Password : the DEMO_PASSWORD line in data${process.platform === 'win32' ? '\\' : '/'}local.env  (open it in Notepad)
   6-digit code : open a second window here and run   npm run code
 
-  Use "localhost" (not 127.0.0.1) in the address bar. Ctrl+C here stops LDMS.
+  ${PUBLIC_URL ? `Open it ONLY at ${PUBLIC_URL} (not localhost). Ctrl+C here stops LDMS.` : 'Use "localhost" (not 127.0.0.1) in the address bar. Ctrl+C here stops LDMS.'}
 ==============================================================================
 `);
 } catch (err) {

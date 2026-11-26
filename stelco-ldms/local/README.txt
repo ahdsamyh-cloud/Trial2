@@ -95,6 +95,12 @@ START AGAIN / START FRESH
                (a NEW demo password is created - look in data\local.env again)
 
 
+LET OTHERS TEST IT ONLINE
+-------------------------
+  See HOSTING-ONLINE.txt (free option with your own PC, or a small cloud
+  server for about 6 a month).
+
+
 IF SOMETHING GOES WRONG
 -----------------------
   "Port 3000 is already in use"  -> LDMS (or another program) is already running.

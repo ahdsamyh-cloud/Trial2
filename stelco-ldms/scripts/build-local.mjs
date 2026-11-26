@@ -101,7 +101,7 @@ copy('apps/web/.next/static', 'app/web/apps/web/.next/static');
 if (existsSync(join(root, 'apps/web/public'))) copy('apps/web/public', 'app/web/apps/web/public');
 
 // Launcher, helper, instructions
-for (const f of ['start.mjs', 'code.mjs', 'README.txt']) copy(`local/${f}`, f);
+for (const f of ['start.mjs', 'code.mjs', 'README.txt', 'HOSTING-ONLINE.txt']) copy(`local/${f}`, f);
 
 // npm project: the API's runtime dependencies + the embedded database
 const apiPkg = JSON.parse(readFileSync(join(root, 'apps/api/package.json'), 'utf8'));

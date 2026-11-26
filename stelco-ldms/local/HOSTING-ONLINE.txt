@@ -1,0 +1,77 @@
+STELCO LDMS (local edition) - LETTING SEVERAL PEOPLE TEST IT ONLINE
+===================================================================
+
+This is for TESTING with demo data only. Do not upload real case files: the
+local edition is not the hardened production setup (see source\stelco-ldms\docs\IT_SETUP.md).
+
+LDMS always listens only on this computer (127.0.0.1). A "tunnel" or a web
+server in front of it gives it a public https:// address. You must tell LDMS
+that address with LDMS_PUBLIC_URL, otherwise sign-in from that address is
+refused (protection against cross-site attacks).
+
+
+OPTION A - FREE: your own PC + Cloudflare Quick Tunnel
+------------------------------------------------------
+Good for a few days of testing. Your PC must stay on and awake while people test.
+
+ 1. Install cloudflared once (Command Prompt):
+        winget install --id Cloudflare.cloudflared
+    (or download it from https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+
+ 2. Window 1 - start the tunnel:
+        cloudflared tunnel --url http://localhost:3000
+    Wait for a line with an address like  https://random-words.trycloudflare.com
+    Leave this window open.
+
+ 3. Window 2 - start LDMS with that address (in the stelco-ldms-local folder):
+        set LDMS_PUBLIC_URL=https://random-words.trycloudflare.com
+        npm start
+    (PowerShell:  $env:LDMS_PUBLIC_URL="https://random-words.trycloudflare.com"  then  npm start)
+
+ 4. Send the testers the address. They open it in their browser.
+    You can still open it yourself at the same address (not localhost).
+
+ The address changes every time you restart the tunnel. Then stop LDMS
+ (Ctrl+C) and start it again with the new address (step 3).
+
+
+OPTION B - ABOUT 6 EUR/USD A MONTH: a small cloud server
+---------------------------------------------------------
+Stays online 24/7. Any provider with Ubuntu Linux, 2 vCPU, 4 GB RAM, 40 GB disk
+(e.g. Hetzner CX23, DigitalOcean, Vultr, Linode). Delete it when testing ends.
+
+ 1. Create the server (Ubuntu 24.04). Point a name to its IP address, e.g.
+    ldms.yourdomain.com  (no domain? use  <ip-with-dashes>.sslip.io,
+    e.g. 203-0-113-10.sslip.io, which works without any setup).
+
+ 2. Install Node.js 22 and Caddy (Caddy gets the https certificate for you):
+        curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -
+        sudo apt-get install -y nodejs unzip caddy
+
+ 3. Copy stelco-ldms-local.zip to the server, then:
+        unzip stelco-ldms-local.zip && cd stelco-ldms-local && npm install
+
+ 4. Caddy: put this in /etc/caddy/Caddyfile (use your name), then
+    sudo systemctl reload caddy
+        ldms.yourdomain.com {
+            reverse_proxy 127.0.0.1:3000
+        }
+
+ 5. Start LDMS so it keeps running after you log out:
+        LDMS_PUBLIC_URL=https://ldms.yourdomain.com nohup npm start > ldms.log 2>&1 &
+    Password:   grep DEMO_PASSWORD data/local.env
+
+ 6. Server firewall: allow only ports 22, 80 and 443.
+
+
+SIGNING IN (both options)
+-------------------------
+ * Usernames and password: see README.txt (one demo password for everyone).
+ * 6-digit codes: instead of sending codes, give testers the line
+   DEMO_TOTP_SECRET=... from data\local.env. They add it once in Microsoft or
+   Google Authenticator ("Enter a setup key", time-based) and get their own codes.
+ * Give each tester a different username: a code can be used only once per
+   user, so two people signing in as the same user at the same moment block
+   each other for 30 seconds.
+ * Anyone with the address, the password and the code can sign in. Share them
+   only with your testers, and stop the tunnel / delete the server afterwards.
