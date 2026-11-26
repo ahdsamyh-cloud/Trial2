@@ -1,0 +1,15 @@
+name: LDMS DAST (staging)
+on:
+  workflow_dispatch:
+  schedule: [{ cron: "0 22 * * 4" }]
+permissions: { contents: read }
+jobs:
+  zap-baseline:
+    runs-on: [self-hosted, stelco-staging]   # must run inside the STELCO network
+    steps:
+      - uses: actions/checkout@v4
+      - uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: ${{ vars.LDMS_STAGING_URL }}
+          rules_file_name: stelco-ldms/infra/zap-rules.tsv
+          cmd_options: "-a -j"

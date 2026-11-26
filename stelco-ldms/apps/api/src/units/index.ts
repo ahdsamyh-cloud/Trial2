@@ -1,0 +1,7 @@
+import { AwarenessModule } from './awareness/awareness.module';
+import { ComplianceModule } from './compliance/compliance.module';
+import { DraftingModule } from './drafting/drafting.module';
+import { LitigationModule } from './litigation/litigation.module';
+
+/** Unit modules (one per Legal unit). */
+export const UNIT_MODULES: any[] = [LitigationModule, DraftingModule, ComplianceModule, AwarenessModule];
