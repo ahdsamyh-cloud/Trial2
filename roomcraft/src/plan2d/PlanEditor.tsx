@@ -2,7 +2,26 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Circle, Group, Layer, Line, Rect, Stage, Text } from 'react-konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 import { useProject } from '../store/projectStore';
-import { usePrefs, useUI } from '../store/uiStore';
+import { selRoomId, usePrefs, useUI, type PlaceSpec } from '../store/uiStore';
+import { useClashIds, useCountertop } from '../store/derived';
+import {
+  ApplianceShape,
+  CountertopLayer,
+  FurnitureLayer,
+  MeasureLine,
+  ModuleShape,
+  OpeningsLayer,
+  ServicesLayer,
+  StructureLayer,
+  openingSymbol,
+  type ItemTarget,
+} from './layers';
+import { placeBox, placeColumn, placeOpening, placeService, OPENING_DEFAULTS } from './placement';
+import { applianceDef } from '../model/appliances';
+import { moduleDef, newModule } from '../model/furniture';
+import { serviceDef } from '../model/catalog';
+import { columnPolygon, findWall, localToPlan, planToLocal, pointOnWall, type Placed } from '../model/structure';
+import type { ApplianceInstance, ModuleInstance } from '../model/types';
 import { usePalette, type Palette } from '../theme';
 import type { Room, Vec2 } from '../model/types';
 import {
@@ -25,11 +44,20 @@ import { formatArea, formatLength, parseLength } from '../model/units';
 import { fitBounds, toScreen, toWorld, zoomAt, type ViewTransform } from './view';
 import { Grid } from './Grid';
 import {
+  addAppliance,
+  addBeam,
+  addColumn,
   addCorner,
+  addModule,
+  addOpening,
   addRoomFromPoints,
+  addService,
   dragCorner,
+  dragItems,
   dragRoom,
+  dragStructure,
   finishGesture,
+  runMembers,
   setWallLengthAction,
 } from '../store/actions';
 
@@ -37,13 +65,35 @@ type Target =
   | { kind: 'bg' }
   | { kind: 'room'; roomId: string }
   | { kind: 'wall'; roomId: string; wallId: string }
-  | { kind: 'corner'; roomId: string; index: number };
+  | { kind: 'corner'; roomId: string; index: number }
+  | ItemTarget;
+
+type Ghost =
+  | { cat: 'opening'; poly: Vec2[]; lines: Vec2[][] }
+  | { cat: 'service'; at: Vec2; color: string }
+  | { cat: 'column'; poly: Vec2[] }
+  | { cat: 'beam'; a: Vec2; b: Vec2 }
+  | { cat: 'module'; m: ModuleInstance }
+  | { cat: 'appliance'; a: ApplianceInstance }
+  | { cat: 'measure'; a: Vec2; b: Vec2 };
+
+interface MoveMember {
+  kind: 'module' | 'appliance';
+  id: string;
+  orig: Placed;
+  u: number;
+  v: number;
+  dr: number;
+}
 
 type Drag =
   | { kind: 'pan'; start: Vec2; startView: ViewTransform; moved: boolean; tapDeselect: boolean }
   | { kind: 'corner'; roomId: string; index: number; moved: boolean; start: Vec2 }
   | { kind: 'room'; roomId: string; original: Room; startWorld: Vec2; start: Vec2; moved: boolean }
   | { kind: 'draw'; start: Vec2; pointerType: string }
+  | { kind: 'tool'; start: Vec2; pointerType: string }
+  | { kind: 'item'; primary: MoveMember; members: MoveMember[]; grab: Vec2; start: Vec2; moved: boolean }
+  | { kind: 'struct'; target: 'opening' | 'service' | 'column'; id: string; start: Vec2; moved: boolean }
   | { kind: 'pinch'; startDist: number; startMid: Vec2; startView: ViewTransform };
 
 const TAP_PX = 6;
@@ -63,7 +113,14 @@ export function PlanEditor() {
   const viewRef = useRef(view);
   viewRef.current = view;
 
-  const rooms = useProject((s) => s.project.rooms);
+  const project = useProject((s) => s.project);
+  const rooms = project.rooms;
+  const placing = useUI((s) => s.placing);
+  const measurements = useUI((s) => s.measurements);
+  const clashIds = useClashIds();
+  const counterPieces = useCountertop();
+  const [ghost, setGhost] = useState<Ghost | null>(null);
+  const [pending, setPending] = useState<Vec2 | null>(null); // first point of a beam / measurement
   const selection = useUI((s) => s.selection);
   const tool = useUI((s) => s.tool);
   const fitRequest = useUI((s) => s.fitRequest);
@@ -113,7 +170,15 @@ export function PlanEditor() {
       setDraft([]);
       setCursor(null);
     }
+    if (tool !== 'place' && tool !== 'measure') {
+      setGhost(null);
+      setPending(null);
+    }
   }, [tool]);
+  useEffect(() => {
+    setPending(null);
+    setGhost(null);
+  }, [placing]);
 
   /* ---------- snapping ---------- */
   const snapTargets = useMemo(() => {
@@ -193,6 +258,157 @@ export function PlanEditor() {
     setTypedLen('');
   };
 
+  /* ---------- placing library items ---------- */
+  const tolMm = () => SNAP_PX / viewRef.current.scale;
+
+  /** Compute where a library item would go; returns a ghost and a commit function. */
+  const resolvePlace = (spec: PlaceSpec, w: Vec2): { ghost: Ghost | null; commit: () => void } | null => {
+    const p = useProject.getState().project;
+    switch (spec.cat) {
+      case 'opening': {
+        const r = placeOpening(p, w, OPENING_DEFAULTS[spec.kind].width, tolMm() * 3);
+        if (!r) return null;
+        const sym = openingSymbol(r.frame, { offset: r.offset, width: r.width, kind: spec.kind, hinge: 'left', swing: 'in' });
+        return { ghost: { cat: 'opening', poly: sym.gap, lines: sym.lines }, commit: () => addOpening(spec.kind, r.wallId, r.offset, r.width) };
+      }
+      case 'service': {
+        const r = placeService(p, spec.kind, w, prefs.gridSize);
+        const f = r.wallId ? findWall(p, r.wallId) : null;
+        const at = f ? pointOnWall(f, r.offset) : { x: r.x, y: r.y };
+        return { ghost: { cat: 'service', at, color: serviceDef(spec.kind).color }, commit: () => addService(spec.kind, r) };
+      }
+      case 'column': {
+        const r = placeColumn(p, w, { width: 300, depth: 300 }, prefs.gridSize);
+        return { ghost: { cat: 'column', poly: columnPolygon({ ...r, width: 300, depth: 300 }) }, commit: () => addColumn(r) };
+      }
+      case 'beam': {
+        const s = snap(w, { prev: pending ?? undefined });
+        if (!pending) return { ghost: { cat: 'beam', a: s.point, b: s.point }, commit: () => setPending(s.point) };
+        return {
+          ghost: { cat: 'beam', a: pending, b: s.point },
+          commit: () => {
+            if (dist(pending, s.point) > 100) addBeam(pending, s.point);
+            setPending(null);
+            setUI({ tool: 'select', placing: null });
+          },
+        };
+      }
+      case 'module': {
+        const def = moduleDef(spec.type);
+        if (!def) return null;
+        const size: Placed = { x: 0, y: 0, rotation: 0, ...def.size };
+        const r = placeBox(p, 'module', spec.type, size, w, tolMm() * 4, new Set());
+        const m = newModule(spec.type, p, r.placed as Partial<ModuleInstance>);
+        return { ghost: { cat: 'module', m }, commit: () => addModule(spec.type, r.placed) };
+      }
+      case 'appliance': {
+        const def = applianceDef(spec.type);
+        if (!def) return null;
+        const size: Placed = { x: 0, y: 0, rotation: 0, width: def.width, depth: def.depth, height: def.height, elevation: def.elevation };
+        const r = placeBox(p, 'appliance', spec.type, size, w, tolMm() * 4, new Set());
+        const a = { id: 'ghost', type: spec.type, name: def.name, ...r.placed } as ApplianceInstance;
+        return { ghost: { cat: 'appliance', a }, commit: () => addAppliance(spec.type, r.placed) };
+      }
+    }
+  };
+
+  const hoverTool = (w: Vec2) => {
+    if (tool === 'place' && placing) setGhost(resolvePlace(placing, w)?.ghost ?? null);
+    if (tool === 'measure') {
+      const s = snap(w, { prev: pending ?? undefined });
+      setGhost(pending ? { cat: 'measure', a: pending, b: s.point } : null);
+      setCursor(s);
+    }
+  };
+
+  const tapTool = (w: Vec2) => {
+    if (tool === 'place' && placing) {
+      const r = resolvePlace(placing, w);
+      if (!r) {
+        useUI.getState().notify(placing.cat === 'opening' ? 'Click on a wall to place it.' : 'Cannot place here.', 'error');
+        return;
+      }
+      r.commit();
+      if (placing.cat !== 'beam') {
+        setGhost(null);
+        setUI({ tool: 'select', placing: null });
+      }
+    } else if (tool === 'measure') {
+      const s = snap(w, { prev: pending ?? undefined });
+      if (!pending) setPending(s.point);
+      else {
+        setUI({ measurements: [...useUI.getState().measurements, { a: pending, b: s.point }] });
+        setPending(null);
+        setGhost(null);
+      }
+    }
+  };
+
+  /** Drop from the library (HTML5 drag-and-drop). */
+  const onDrop = (e: React.DragEvent) => {
+    const raw = e.dataTransfer.getData('application/x-roomcraft');
+    if (!raw) return;
+    e.preventDefault();
+    const spec = JSON.parse(raw) as PlaceSpec;
+    const w = toWorld(viewRef.current, screenPoint(e));
+    if (spec.cat === 'beam') {
+      setUI({ tool: 'place', placing: spec });
+      return;
+    }
+    const r = resolvePlace(spec, w);
+    if (r) r.commit();
+    else useUI.getState().notify(spec.cat === 'opening' ? 'Drop doors and windows onto a wall.' : 'Cannot place here.', 'error');
+  };
+
+  /* ---------- moving placed items ---------- */
+  const memberOf = (kind: 'module' | 'appliance', it: Placed & { id: string }, primary: Placed): MoveMember => {
+    const l = planToLocal(primary, { x: it.x, y: it.y });
+    return { kind, id: it.id, orig: { ...it }, u: l.u, v: l.v, dr: it.rotation - primary.rotation };
+  };
+
+  const moveItem = (d: Extract<Drag, { kind: 'item' }>, w: Vec2) => {
+    const p = useProject.getState().project;
+    const pr = d.primary;
+    const target = { x: w.x - d.grab.x, y: w.y - d.grab.y }; // desired centre
+    const ignore = new Set(d.members.map((m) => m.id));
+    let placed: Placed;
+    if (d.members.length > 1) {
+      // runs: snap the group's primary to walls, keep relative layout
+      const r = placeBox(p, pr.kind, '', pr.orig, target, tolMm() * 4, ignore);
+      placed = { ...r.placed, elevation: pr.orig.elevation };
+    } else {
+      const type = pr.kind === 'module' ? p.modules.find((m) => m.id === pr.id)?.type ?? '' : p.appliances.find((a) => a.id === pr.id)?.type ?? '';
+      const r = placeBox(p, pr.kind, type, pr.orig, target, tolMm() * 4, ignore);
+      const keepElev = pr.kind === 'module' || !(applianceDef(type)?.mount === 'inset' || applianceDef(type)?.mount === 'counter' || r.host);
+      placed = { ...r.placed, elevation: keepElev ? pr.orig.elevation : r.placed.elevation };
+    }
+    const moves = d.members.map((m) => {
+      if (m === pr) return { kind: m.kind, id: m.id, to: placed };
+      const o = localToPlan(placed, m.u, m.v);
+      return { kind: m.kind, id: m.id, to: { ...m.orig, x: o.x, y: o.y, rotation: placed.rotation + m.dr } };
+    });
+    dragItems(moves);
+  };
+
+  const moveStruct = (d: Extract<Drag, { kind: 'struct' }>, w: Vec2) => {
+    const p = useProject.getState().project;
+    if (d.target === 'opening') {
+      const o = p.openings.find((x) => x.id === d.id);
+      if (!o) return;
+      const r = placeOpening(p, w, o.width, tolMm() * 3);
+      if (r) dragStructure('opening', d.id, { wallId: r.wallId, offset: r.offset });
+    } else if (d.target === 'service') {
+      const s = p.services.find((x) => x.id === d.id);
+      if (!s) return;
+      const r = placeService(p, s.kind, w, prefs.gridSize);
+      dragStructure('service', d.id, r);
+    } else {
+      const c = p.columns.find((x) => x.id === d.id);
+      if (!c) return;
+      dragStructure('column', d.id, placeColumn(p, w, c, prefs.gridSize));
+    }
+  };
+
   /* ---------- pointer handling ---------- */
   const screenPoint = (evt: { clientX: number; clientY: number }): Vec2 => {
     const r = containerRef.current!.getBoundingClientRect();
@@ -230,6 +446,11 @@ export function PlanEditor() {
       setCursor(snapDraw(toWorld(viewRef.current, sp)));
       return;
     }
+    if (tool === 'place' || tool === 'measure') {
+      dragRef.current = { kind: 'tool', start: sp, pointerType: evt.pointerType };
+      hoverTool(toWorld(viewRef.current, sp));
+      return;
+    }
 
     switch (target.kind) {
       case 'bg':
@@ -263,6 +484,45 @@ export function PlanEditor() {
         useProject.getState().beginGesture('Move corner');
         dragRef.current = { kind: 'corner', roomId: target.roomId, index: target.index, moved: false, start: sp };
         break;
+      case 'item': {
+        const p = useProject.getState().project;
+        const w = toWorld(viewRef.current, sp);
+        if (target.cat === 'module') {
+          const cur = useUI.getState().selection;
+          if (evt.shiftKey && cur?.kind === 'module') {
+            const ids = cur.ids.includes(target.id) ? cur.ids.filter((i) => i !== target.id) : [...cur.ids, target.id];
+            setUI({ selection: ids.length ? { kind: 'module', id: ids[ids.length - 1], ids } : null });
+            return;
+          }
+          const keep = cur?.kind === 'module' && cur.ids.includes(target.id) && cur.ids.length > 1;
+          if (!keep) setUI({ selection: { kind: 'module', id: target.id, ids: [target.id] } });
+        } else setUI({ selection: { kind: 'appliance', id: target.id } });
+        const prim = target.cat === 'module' ? p.modules.find((m) => m.id === target.id) : p.appliances.find((a) => a.id === target.id);
+        if (!prim) return;
+        let group: MoveMember[];
+        if (target.cat === 'module') {
+          const cur = useUI.getState().selection;
+          const ids = new Set(cur?.kind === 'module' ? cur.ids : [target.id]);
+          const all = new Map<string, ModuleInstance>();
+          for (const id of ids) for (const m of runMembers(p, id)) all.set(m.id, m);
+          group = [...all.values()].map((m) => memberOf('module', m, prim));
+        } else group = [memberOf('appliance', prim, prim)];
+        const centre = localToPlan(prim, prim.width / 2, prim.depth / 2);
+        useProject.getState().beginGesture(`Move ${prim.name}`);
+        dragRef.current = { kind: 'item', primary: group.find((g) => g.id === prim.id)!, members: group, grab: { x: w.x - centre.x, y: w.y - centre.y }, start: sp, moved: false };
+        break;
+      }
+      case 'opening':
+      case 'service':
+      case 'column':
+        setUI({ selection: { kind: target.kind, id: target.id } });
+        useProject.getState().beginGesture(`Move ${target.kind}`);
+        dragRef.current = { kind: 'struct', target: target.kind, id: target.id, start: sp, moved: false };
+        break;
+      case 'beam':
+        setUI({ selection: { kind: 'beam', id: target.id } });
+        dragRef.current = { kind: 'pan', start: sp, startView: viewRef.current, moved: false, tapDeselect: false };
+        break;
     }
   };
 
@@ -273,7 +533,10 @@ export function PlanEditor() {
     const d = dragRef.current;
 
     if (!d) {
-      if (tool === 'draw' && evt.pointerType === 'mouse') setCursor(snapDraw(toWorld(viewRef.current, sp)));
+      if (evt.pointerType !== 'mouse') return;
+      const overCanvas = (evt.target as HTMLElement)?.tagName === 'CANVAS';
+      if (tool === 'draw') setCursor(snapDraw(toWorld(viewRef.current, sp)));
+      else if ((tool === 'place' || tool === 'measure') && overCanvas) hoverTool(toWorld(viewRef.current, sp));
       return;
     }
     switch (d.kind) {
@@ -294,6 +557,19 @@ export function PlanEditor() {
       }
       case 'draw':
         setCursor(snapDraw(toWorld(viewRef.current, sp)));
+        break;
+      case 'tool':
+        hoverTool(toWorld(viewRef.current, sp));
+        break;
+      case 'item':
+        if (!d.moved && dist(sp, d.start) < TAP_PX) return;
+        d.moved = true;
+        moveItem(d, toWorld(viewRef.current, sp));
+        break;
+      case 'struct':
+        if (!d.moved && dist(sp, d.start) < TAP_PX) return;
+        d.moved = true;
+        moveStruct(d, toWorld(viewRef.current, sp));
         break;
       case 'corner': {
         if (!d.moved && dist(sp, d.start) < TAP_PX / 2) return;
@@ -372,6 +648,14 @@ export function PlanEditor() {
         setCursor(null);
         finishGesture();
         break;
+      case 'tool':
+        tapTool(toWorld(viewRef.current, sp));
+        if (d.pointerType !== 'mouse' && tool === 'place') setGhost(null);
+        break;
+      case 'item':
+      case 'struct':
+        finishGesture();
+        break;
     }
   };
 
@@ -405,6 +689,14 @@ export function PlanEditor() {
       if (e.code === 'Space' && !typing) {
         spaceDown.current = true;
         if (e.target === document.body) e.preventDefault();
+      }
+      if ((tool === 'place' || tool === 'measure') && e.key === 'Escape' && !typing) {
+        setPending(null);
+        setGhost(null);
+        setCursor(null);
+        setUI({ tool: 'select', placing: null });
+        e.stopPropagation();
+        return;
       }
       if (tool !== 'draw' || typing) return;
       if (e.key === 'Escape') {
@@ -459,8 +751,9 @@ export function PlanEditor() {
 
   /* ---------- render ---------- */
   const px = 1 / view.scale; // one screen pixel in mm
-  const activeRoomId = selection?.roomId;
-  const cursorStyle = tool === 'draw' ? 'crosshair' : tool === 'pan' ? 'grab' : 'default';
+  const activeRoomId = selRoomId(selection);
+  const cursorStyle = tool === 'draw' || tool === 'place' || tool === 'measure' ? 'crosshair' : tool === 'pan' ? 'grab' : 'default';
+  const L = prefs.layers;
 
   return (
     <div
@@ -468,19 +761,23 @@ export function PlanEditor() {
       className="plan-editor"
       style={{ cursor: cursorStyle, background: palette.bg }}
       onContextMenu={(e) => e.preventDefault()}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes('application/x-roomcraft')) e.preventDefault();
+      }}
+      onDrop={onDrop}
     >
       <Stage
         width={size.w}
         height={size.h}
         onWheel={onWheel}
         onPointerDown={(e) => {
-          if (e.target === e.target.getStage() || tool === 'draw') handleDown(e.evt, { kind: 'bg' });
+          if (e.target === e.target.getStage() || tool === 'draw' || tool === 'place' || tool === 'measure') handleDown(e.evt, { kind: 'bg' });
         }}
       >
         <Layer listening={false}>
           <Grid view={view} width={size.w} height={size.h} gridSize={prefs.gridSize} palette={palette} />
         </Layer>
-        <Layer listening={tool !== 'draw'}>
+        <Layer listening={tool === 'select' || tool === 'pan'}>
           <Group x={view.x} y={view.y} scaleX={view.scale} scaleY={view.scale}>
             {rooms.map((room) => (
               <RoomShape
@@ -501,6 +798,11 @@ export function PlanEditor() {
                 }}
               />
             ))}
+            <OpeningsLayer project={project} palette={palette} px={px} selection={selection} onDown={handleDown} />
+            {L.structure && <StructureLayer project={project} palette={palette} px={px} selection={selection} units={prefs.units} onDown={handleDown} />}
+            {L.furniture && <FurnitureLayer project={project} palette={palette} px={px} selection={selection} clashIds={clashIds} units={prefs.units} onDown={handleDown} />}
+            {L.furniture && <CountertopLayer pieces={counterPieces} stoneId={project.countertop.stone} px={px} palette={palette} />}
+            <ServicesLayer project={project} palette={palette} px={px} selection={selection} layers={L} onDown={handleDown} />
             {/* corner handles for the active room */}
             {tool === 'select' &&
               rooms
@@ -534,6 +836,11 @@ export function PlanEditor() {
           <Group x={view.x} y={view.y} scaleX={view.scale} scaleY={view.scale}>
             {tool === 'draw' && <DraftShape draft={draft} cursor={cursor} px={px} palette={palette} units={prefs.units} />}
             {tool !== 'draw' && cursor && <Guides guides={cursor.guides} px={px} palette={palette} />}
+            {measurements.map((m, i) => (
+              <MeasureLine key={i} a={m.a} b={m.b} px={px} palette={palette} units={prefs.units} />
+            ))}
+            {ghost && <GhostShape ghost={ghost} px={px} palette={palette} units={prefs.units} />}
+            {pending && <Circle x={pending.x} y={pending.y} radius={5 * px} fill={palette.guide} />}
           </Group>
         </Layer>
       </Stage>
@@ -598,9 +905,29 @@ export function PlanEditor() {
               </form>
             )}
           </>
+        ) : tool === 'place' && placing ? (
+          <span>
+            {placing.cat === 'beam'
+              ? pending
+                ? 'Click the beam end point'
+                : 'Click the beam start point'
+              : placing.cat === 'opening'
+                ? 'Click on a wall to place it'
+                : 'Click to place · snaps to walls and neighbours'}{' '}
+            · <kbd>Esc</kbd> cancel
+          </span>
+        ) : tool === 'measure' ? (
+          <span>
+            {pending ? 'Click the second point' : 'Click two points to measure'} ·{' '}
+            <button className="link" onClick={() => setUI({ measurements: [] })}>
+              clear ({measurements.length})
+            </button>
+          </span>
         ) : (
           <span className="muted">
-            {selection?.kind === 'room'
+            {selection?.kind === 'module' || selection?.kind === 'appliance'
+              ? 'Drag to move (snaps to walls & neighbours) · R rotate · Ctrl+D duplicate · Shift-click to multi-select'
+              : selection?.kind === 'room'
               ? 'Drag the room to move it · drag corners to reshape · tap a dimension to edit'
               : selection?.kind === 'wall'
                 ? 'Double-click a wall to add a corner · tap its dimension to change length'
@@ -815,4 +1142,30 @@ function Guides({ guides, px, palette }: { guides: SnapGuide[]; px: number; pale
       })}
     </>
   );
+}
+
+function GhostShape({ ghost, px, palette, units }: { ghost: Ghost; px: number; palette: Palette; units: RoomShapeProps['units'] }) {
+  switch (ghost.cat) {
+    case 'opening':
+      return (
+        <Group opacity={0.75}>
+          <Line points={ghost.poly.flatMap((p) => [p.x, p.y])} closed fill={palette.accent} opacity={0.4} />
+          {ghost.lines.map((l, i) => (
+            <Line key={i} points={l.flatMap((p) => [p.x, p.y])} stroke={palette.accent} strokeWidth={1.5 * px} />
+          ))}
+        </Group>
+      );
+    case 'service':
+      return <Circle x={ghost.at.x} y={ghost.at.y} radius={9 * px} fill={ghost.color} opacity={0.7} />;
+    case 'column':
+      return <Line points={ghost.poly.flatMap((p) => [p.x, p.y])} closed fill={palette.column} opacity={0.5} />;
+    case 'beam':
+      return <Line points={[ghost.a.x, ghost.a.y, ghost.b.x, ghost.b.y]} stroke={palette.beam} strokeWidth={230} opacity={0.35} />;
+    case 'module':
+      return <ModuleShape m={ghost.m} palette={palette} px={px} selected clash={false} units={units} ghost />;
+    case 'appliance':
+      return <ApplianceShape a={ghost.a} palette={palette} px={px} selected clash={false} ghost />;
+    case 'measure':
+      return <MeasureLine a={ghost.a} b={ghost.b} px={px} palette={palette} units={units} />;
+  }
 }

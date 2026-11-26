@@ -21,6 +21,15 @@ export interface Palette {
   wall3d: string;
   floor3d: string;
   ground3d: string;
+  windowFill: string;
+  column: string;
+  beam: string;
+  beamFill: string;
+  furnitureStroke: string;
+  applianceStroke: string;
+  counterStroke: string;
+  measure: string;
+  danger: string;
 }
 
 export const LIGHT: Palette = {
@@ -44,6 +53,15 @@ export const LIGHT: Palette = {
   wall3d: '#eeeae3',
   floor3d: '#c9b79c',
   ground3d: '#dedcd6',
+  windowFill: '#d6ecf7',
+  column: '#4a4f55',
+  beam: '#8a4fbf',
+  beamFill: 'rgba(138,79,191,0.08)',
+  furnitureStroke: '#5a4a38',
+  applianceStroke: '#43484d',
+  counterStroke: '#6b6359',
+  measure: '#d9480f',
+  danger: '#d63a2a',
 };
 
 export const DARK: Palette = {
@@ -67,6 +85,15 @@ export const DARK: Palette = {
   wall3d: '#d9d5ce',
   floor3d: '#8d7b63',
   ground3d: '#2b2f34',
+  windowFill: '#26404d',
+  column: '#8f969e',
+  beam: '#c294f0',
+  beamFill: 'rgba(194,148,240,0.1)',
+  furnitureStroke: '#e8d9c4',
+  applianceStroke: '#cfd4d8',
+  counterStroke: '#d0c6b8',
+  measure: '#ff7a3c',
+  danger: '#ff5a48',
 };
 
 export function usePalette(): Palette {

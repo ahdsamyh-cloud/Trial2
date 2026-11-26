@@ -1,6 +1,7 @@
 import { add, boundsOf, cleanPolygon, dist, lerp, norm, scale, signedArea, sub } from './geometry';
 import { uid } from './ids';
-import type { Project, Room, Vec2, Wall } from './types';
+import type { Project, ProjectSettings, Room, Vec2, Wall, CountertopSettings } from './types';
+import { defaultPrices } from './catalog';
 
 export const DEFAULT_WALL_THICKNESS = 230;
 export const DEFAULT_WALL_HEIGHT = 3000;
@@ -166,6 +167,32 @@ export function nextRoomOrigin(project: Project, gap = 1000): Vec2 {
   return { x: Math.ceil((b.maxX + 2 * maxT + gap) / 100) * 100, y: Math.round(b.minY / 100) * 100 };
 }
 
+export function defaultSettings(): ProjectSettings {
+  return {
+    defaultWallThickness: DEFAULT_WALL_THICKNESS,
+    defaultWallHeight: DEFAULT_WALL_HEIGHT,
+    board: { material: 'ply', thickness: 18, finish: 'lam-white' },
+    frontFinish: 'lam-oak',
+    carcassEdge: { thickness: 0.8, finish: 'lam-white' },
+    frontEdge: { thickness: 2, finish: 'lam-oak' },
+    handle: 'profile',
+    sheet: { length: 2440, width: 1220, kerf: 4, trim: 10 },
+  };
+}
+
+export function defaultCountertop(): CountertopSettings {
+  return {
+    enabled: true,
+    stone: 'quartz-white',
+    thickness: 20,
+    frontOverhang: 20,
+    sideOverhang: 20,
+    backsplashHeight: 100,
+    slabLength: 3000,
+    slabWidth: 1400,
+  };
+}
+
 export function newProject(name = 'Untitled project'): Project {
   const now = new Date().toISOString();
   return {
@@ -173,7 +200,15 @@ export function newProject(name = 'Untitled project'): Project {
     id: uid('proj'),
     name,
     rooms: [],
-    settings: { defaultWallThickness: DEFAULT_WALL_THICKNESS, defaultWallHeight: DEFAULT_WALL_HEIGHT },
+    openings: [],
+    services: [],
+    beams: [],
+    columns: [],
+    modules: [],
+    appliances: [],
+    countertop: defaultCountertop(),
+    prices: defaultPrices(),
+    settings: defaultSettings(),
     createdAt: now,
     updatedAt: now,
   };
@@ -186,13 +221,34 @@ export function migrateProject(data: unknown): Project {
   const p = (d.project ?? d) as Partial<Project>;
   if (p.version !== 1 || !Array.isArray(p.rooms)) throw new Error('Unsupported or corrupt project file.');
   const base = newProject(p.name ?? 'Imported project');
+  const settings = { ...base.settings, ...p.settings, sheet: { ...base.settings.sheet, ...p.settings?.sheet }, board: { ...base.settings.board, ...p.settings?.board } };
   const rooms = p.rooms.map((r) => {
     if (!Array.isArray(r.points) || r.points.length < 3) throw new Error(`Room "${r.name}" has invalid corners.`);
-    const walls = r.points.map(
-      (_, i) =>
-        r.walls?.[i] ?? makeWall(p.settings?.defaultWallThickness ?? DEFAULT_WALL_THICKNESS, p.settings?.defaultWallHeight ?? DEFAULT_WALL_HEIGHT),
-    );
-    return canonicalize({ id: r.id ?? uid('room'), name: r.name ?? 'Room', points: r.points, walls });
+    const walls = r.points.map((_, i) => r.walls?.[i] ?? makeWall(settings.defaultWallThickness, settings.defaultWallHeight));
+    return canonicalize({ ...r, id: r.id ?? uid('room'), name: r.name ?? 'Room', points: r.points, walls });
   });
-  return { ...base, ...p, version: 1, rooms, settings: { ...base.settings, ...p.settings } } as Project;
+  const arr = <T>(v: T[] | undefined): T[] => (Array.isArray(v) ? v : []);
+  return {
+    ...base,
+    ...p,
+    version: 1,
+    rooms,
+    openings: arr(p.openings),
+    services: arr(p.services),
+    beams: arr(p.beams),
+    columns: arr(p.columns),
+    modules: arr(p.modules).map((m) => ({ ...m, params: m.params ?? {}, panelOverrides: m.panelOverrides ?? {} })),
+    appliances: arr(p.appliances),
+    countertop: { ...base.countertop, ...p.countertop },
+    prices: {
+      ...base.prices,
+      ...p.prices,
+      boards: { ...base.prices.boards, ...p.prices?.boards },
+      hardware: { ...base.prices.hardware, ...p.prices?.hardware },
+      stonePerSqft: { ...base.prices.stonePerSqft, ...p.prices?.stonePerSqft },
+      edgeBandPerM: { ...base.prices.edgeBandPerM, ...p.prices?.edgeBandPerM },
+      finishPerSqft: { ...base.prices.finishPerSqft, ...p.prices?.finishPerSqft },
+    },
+    settings,
+  } as Project;
 }

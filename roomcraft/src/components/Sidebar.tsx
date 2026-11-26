@@ -2,7 +2,11 @@ import { STEPS, CURRENT_PHASE } from './steps';
 import { useUI } from '../store/uiStore';
 import { FloorPlanPanel } from '../steps/FloorPlanPanel';
 import { WallsPanel } from '../steps/WallsPanel';
-import { ComingSoonPanel } from '../steps/ComingSoonPanel';
+import { ServicesPanel } from '../steps/ServicesPanel';
+import { FurniturePanel } from '../steps/FurniturePanel';
+import { AppliancesPanel } from '../steps/AppliancesPanel';
+import { CountertopPanel } from '../steps/CountertopPanel';
+import { OutputsPanel } from '../steps/OutputsPanel';
 
 export function Sidebar() {
   const step = useUI((s) => s.step);
@@ -17,7 +21,7 @@ export function Sidebar() {
           <button
             key={s.id}
             className={`step${s.id === step ? ' active' : ''}${s.phase > CURRENT_PHASE ? ' locked' : ''}`}
-            onClick={() => setUI({ step: s.id, sidebarOpen: true })}
+            onClick={() => setUI({ step: s.id, sidebarOpen: true, tool: 'select', placing: null })}
             title={s.phase > CURRENT_PHASE ? `${s.title} — coming in phase ${s.phase}` : s.title}
           >
             <span className="step-num">{i + 1}</span>
@@ -40,7 +44,11 @@ export function Sidebar() {
         <div className="panel-body">
           {step === 'floor' && <FloorPlanPanel />}
           {step === 'walls' && <WallsPanel />}
-          {def.phase > CURRENT_PHASE && <ComingSoonPanel step={def} />}
+          {step === 'services' && <ServicesPanel />}
+          {step === 'furniture' && <FurniturePanel />}
+          {step === 'appliances' && <AppliancesPanel />}
+          {step === 'countertop' && <CountertopPanel />}
+          {step === 'outputs' && <OutputsPanel />}
         </div>
         <footer className="panel-foot">
           <button

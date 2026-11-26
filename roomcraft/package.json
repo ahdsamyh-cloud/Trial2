@@ -14,11 +14,14 @@
     "@react-three/fiber": "^8.18.0",
     "idb-keyval": "^6.3.0",
     "immer": "^11.2.10",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.9",
     "konva": "^9.3.22",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-konva": "^18.2.16",
     "three": "^0.169.0",
+    "write-excel-file": "^4.1.1",
     "zustand": "^5.1.0"
   },
   "devDependencies": {

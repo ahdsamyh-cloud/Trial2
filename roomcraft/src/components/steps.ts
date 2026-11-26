@@ -18,4 +18,4 @@ export const STEPS: StepDef[] = [
   { id: 'outputs', title: 'Cut list & outputs', short: 'Outputs', icon: '✂', phase: 5 },
 ];
 
-export const CURRENT_PHASE = 1;
+export const CURRENT_PHASE = 6;

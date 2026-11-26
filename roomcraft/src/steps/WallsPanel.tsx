@@ -1,5 +1,5 @@
 import { useProject } from '../store/projectStore';
-import { usePrefs, useUI } from '../store/uiStore';
+import { selRoomId, usePrefs, useUI } from '../store/uiStore';
 import { setDefaults, updateAllWalls, updateWall } from '../store/actions';
 import { LengthInput } from '../components/LengthInput';
 import { SelectionInspector } from '../components/SelectionInspector';
@@ -12,7 +12,7 @@ export function WallsPanel() {
   const setUI = useUI((s) => s.set);
   const units = usePrefs((s) => s.units);
   const { defaultWallThickness: t, defaultWallHeight: h } = project.settings;
-  const room = project.rooms.find((r) => r.id === selection?.roomId) ?? project.rooms[0];
+  const room = project.rooms.find((r) => r.id === selRoomId(selection)) ?? project.rooms[0];
 
   return (
     <div className="stack">
@@ -80,7 +80,7 @@ export function WallsPanel() {
           </button>
         </div>
       )}
-      <p className="hint">Doors, windows and columns arrive in phase 2 (Services &amp; structure).</p>
+      <p className="hint">Doors, windows, columns and beams are in the next step (Services &amp; structure).</p>
     </div>
   );
 }

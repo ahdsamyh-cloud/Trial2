@@ -3,6 +3,8 @@ import { useProject } from '../store/projectStore';
 import { usePrefs, useUI, type ViewMode } from '../store/uiStore';
 import { downloadProject, readProjectFile } from '../store/persistence';
 import { newProject } from '../model/room';
+import { sampleKitchen } from '../model/sample';
+import { ChecksButton } from './ChecksDrawer';
 import { UNIT_LABELS } from '../model/units';
 import type { LengthUnit } from '../model/types';
 
@@ -22,6 +24,7 @@ export function TopBar({ savedAt }: { savedAt: Date | null }) {
     { id: '2d', label: '2D', key: '1' },
     { id: 'split', label: 'Split', key: '2' },
     { id: '3d', label: '3D', key: '3' },
+    { id: 'elev', label: 'Elev.', key: '4' },
   ];
 
   return (
@@ -73,6 +76,16 @@ export function TopBar({ savedAt }: { savedAt: Date | null }) {
             <button
               onClick={() => {
                 setMenu(false);
+                if (project.rooms.length && !confirm('Replace the current project with the sample kitchen? (Undo with Ctrl+Z is not available after loading.)')) return;
+                load(sampleKitchen());
+                setUI({ selection: null, step: 'furniture', fitRequest: useUI.getState().fitRequest + 1 });
+              }}
+            >
+              Load sample kitchen
+            </button>
+            <button
+              onClick={() => {
+                setMenu(false);
                 fileRef.current?.click();
               }}
             >
@@ -85,6 +98,14 @@ export function TopBar({ savedAt }: { savedAt: Date | null }) {
               }}
             >
               Save as .json <kbd>Ctrl S</kbd>
+            </button>
+            <button
+              onClick={() => {
+                setMenu(false);
+                setUI({ tourStep: 0 });
+              }}
+            >
+              Guided tour <kbd>?</kbd>
             </button>
             <div className="menu-settings only-mobile">
               <select value={units} onChange={(e) => setPrefs({ units: e.target.value as LengthUnit })} aria-label="Units">
@@ -129,10 +150,11 @@ export function TopBar({ savedAt }: { savedAt: Date | null }) {
       </div>
 
       <div className="spacer" />
+      <ChecksButton />
 
       <div className="seg view-toggle" role="group" aria-label="View mode">
         {views.map((v) => (
-          <button key={v.id} className={view === v.id ? 'on' : ''} onClick={() => setUI({ view: v.id })} title={`${v.label} view (${v.key})`}>
+          <button key={v.id} className={view === v.id ? 'on' : ''} onClick={() => setUI({ view: v.id, step: useUI.getState().step === 'outputs' ? 'furniture' : useUI.getState().step })} title={`${v.id === 'elev' ? 'Plan + wall elevation' : v.label + ' view'} (${v.key})`}>
             {v.label}
           </button>
         ))}

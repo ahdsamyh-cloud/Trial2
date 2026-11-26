@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useProject } from '../store/projectStore';
-import { closePanelOnPhone, usePrefs, useUI, type Tool } from '../store/uiStore';
+import { closePanelOnPhone, selRoomId, usePrefs, useUI, type Tool } from '../store/uiStore';
 import { addTemplateRoom } from '../store/actions';
 import { LengthInput } from '../components/LengthInput';
 import { SelectionInspector } from '../components/SelectionInspector';
@@ -41,7 +41,7 @@ export function FloorPlanPanel() {
         <div className="seg">
           {tools.map((t) => (
             <button key={t.id} className={tool === t.id ? 'on' : ''} onClick={() => {
-                setUI({ tool: t.id });
+                setUI({ tool: t.id, placing: null });
                 if (t.id !== 'select') closePanelOnPhone();
               }} title={`${t.hint} (${t.key})`}>
               {t.label}
@@ -106,7 +106,7 @@ export function FloorPlanPanel() {
           {rooms.map((r) => (
             <li key={r.id}>
               <button
-                className={selection?.roomId === r.id ? 'on' : ''}
+                className={selRoomId(selection) === r.id ? 'on' : ''}
                 onClick={() => setUI({ selection: { kind: 'room', roomId: r.id } })}
               >
                 <span>{r.name}</span>
