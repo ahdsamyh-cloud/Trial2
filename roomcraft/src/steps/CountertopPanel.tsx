@@ -60,6 +60,25 @@ export function CountertopPanel() {
         ))}
       </div>
       <div className="group">
+        <h3>Wall tiles (between worktop and wall units)</h3>
+        <div className="tile-styles">
+          {(
+            [
+              ['none', 'None', 'transparent'],
+              ['subway-white', 'White subway', '#f7f7f5'],
+              ['subway-grey', 'Grey subway', '#b9bcbf'],
+              ['square-white', 'White square', '#f4f4f1'],
+              ['hex-green', 'Sage square', '#6f9c86'],
+            ] as const
+          ).map(([id, label, c]) => (
+            <button key={id} className={`stone${(ct.wallTiles ?? 'none') === id ? ' on' : ''}`} onClick={() => setCountertop({ wallTiles: id })}>
+              <span className={`tile-sw ${id}`} style={{ background: c }} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="group">
         <h3>Dimensions</h3>
         <div className="grid2">
           <LengthInput label="Thickness" value={ct.thickness} min={10} max={60} onChange={(v) => setCountertop({ thickness: v })} />

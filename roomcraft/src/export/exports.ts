@@ -303,6 +303,8 @@ function drawSheet<T>(doc: Doc, sheet: NestSheet<T>, W: number, H: number, title
 export interface PdfOptions {
   units: LengthUnit;
   snapshot?: string | null;
+  /** dimensioned 3D sketch */
+  sketch?: string | null;
 }
 
 export function exportPdf(project: Project, opts: PdfOptions) {
@@ -325,8 +327,10 @@ export function exportPdf(project: Project, opts: PdfOptions) {
   autoTable(doc, { startY: 26, body: summary, theme: 'plain', styles: { fontSize: 10 }, columnStyles: { 0: { fontStyle: 'bold', cellWidth: 50 } }, margin: { left: M } });
   if (opts.snapshot) {
     const y = (doc.lastAutoTable?.finalY ?? 60) + 6;
+    const props = doc.getImageProperties(opts.snapshot);
     const h = A4L.h - y - M;
-    doc.addImage(opts.snapshot, 'JPEG', M, y, (h * 16) / 10, h);
+    const w = Math.min(A4L.w - 2 * M, (h * props.width) / props.height);
+    doc.addImage(opts.snapshot, 'JPEG', M, y, w, (w * props.height) / props.width);
   }
 
   /* floor plan */
@@ -348,14 +352,20 @@ export function exportPdf(project: Project, opts: PdfOptions) {
     }
   }
 
-  /* 3D snapshot (full page) */
-  if (opts.snapshot) {
+  /* 3D renders (full page each) */
+  const imgPage = (img: string, title: string) => {
     doc.addPage();
-    header(doc, project, '3D view');
-    const w = A4L.w - 2 * M;
-    const h = Math.min(A4L.h - 2 * M - 12, (w * 10) / 16);
-    doc.addImage(opts.snapshot, 'JPEG', M, M + 10, (h * 16) / 10, h);
-  }
+    header(doc, project, title);
+    const props = doc.getImageProperties(img);
+    const maxW = A4L.w - 2 * M;
+    const maxH = A4L.h - 2 * M - 12;
+    const k = Math.min(maxW / props.width, maxH / props.height);
+    const w = props.width * k;
+    const h = props.height * k;
+    doc.addImage(img, 'JPEG', M + (maxW - w) / 2, M + 10, w, h);
+  };
+  if (opts.snapshot) imgPage(opts.snapshot, '3D view');
+  if (opts.sketch) imgPage(opts.sketch, '3D sketch with dimensions');
 
   /* cut list */
   if (rows.length) {

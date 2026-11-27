@@ -183,6 +183,8 @@ export interface CountertopSettings {
   backsplashHeight: number;
   slabLength: number;
   slabWidth: number;
+  /** Wall tiles between the worktop and the wall cabinets. */
+  wallTiles?: 'none' | 'subway-white' | 'subway-grey' | 'square-white' | 'hex-green';
 }
 
 /* ---------- Phase 5: outputs ---------- */

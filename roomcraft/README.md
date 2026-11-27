@@ -19,7 +19,8 @@ npm run build      # type-check + production build into dist/
 npm run preview    # serve the production build
 ```
 
-For a quick tour, open **File → Load sample kitchen**. It loads an L-shaped kitchen that uses
+For a quick tour, open **File → Load showroom kitchen**. It opens straight into a catalogue-style
+render. **File → Load sample kitchen** is a second example with services, a beam and a column. It loads an L-shaped kitchen that uses
 every feature. Press `?` at any time to replay the guided tour.
 
 ## Workflow (left sidebar)
@@ -33,6 +34,21 @@ every feature. Press `?` at any time to replay the guided tour.
 | 5 Appliances | Sinks, hob, hood, oven, microwave, fridge, dishwasher, small appliances, washer, TV, AC, geyser, all at standard sizes. Sinks and hobs cut the countertop. Ovens and microwaves turn the doors and shelves of the cabinet they sit in into an opening with a support shelf. |
 | 6 Countertop | Choose marble, granite, quartz or solid surface. Set thickness, front and side overhang and backsplash. Sink and hob cut-outs are made automatically, L/U corners get butt joints, and pieces are nested onto stone slabs. |
 | 7 Outputs | Cut list (finished and cut sizes, material, finish, edge banding, grain, quantity) exported as CSV or Excel. Sheet optimisation with kerf, trim and grain. Hardware list. Editable price list with totals per module and for the project. PDF with the floor plan, wall elevations, 3D snapshot, cut list, sheet layouts, countertop and cost. |
+
+### Presentation renders (3D view → 📷 Present)
+- **Photo**: studio lighting from a generated environment map, soft shadows, contact shadows,
+  ambient occlusion (N8AO) and SMAA. Only the walls the furniture stands against are shown,
+  cut just above the units, on a seamless studio floor. The camera frames a 3/4 catalogue view
+  looking into the furniture.
+- **Sketch**: the same scene with dark edge lines and red hand-drawn-style dimensions. These
+  show unit widths along each run, wall-unit widths, the overall run length, the worktop
+  height, the overall height and the depth, in your display units (set them to cm for
+  "340 cm"-style drawings).
+- ⤓ **Image** saves the current view as a PNG. The PDF export adds both renders as full pages.
+- Appliance models include a chimney hood with duct, a gas hob with grates and knobs, a sink
+  with open bowls and a faucet, ovens and a microwave with glass doors and handles, and a
+  two-door fridge. Wall tiles (subway/square) between the worktop and the wall units are set
+  in the Countertop step.
 
 ### Smart features
 - **Clash detection** (top-bar badge). Warns when furniture covers a socket or switch, blocks a
@@ -81,9 +97,10 @@ src/model/                 pure, unit-tested logic (no React)
   cutlist.ts, cost.ts      cut list, sheet groups, hardware list, cost estimate
   checks.ts                clash detection + suggestions
   elevation.ts             wall elevation data (shared by the on-screen view and the PDF)
+  annotations.ts           furniture runs + 3D dimension lines for presentation sketches
 src/store/                 project store (command history), UI/prefs store, actions, derived data, persistence
 src/plan2d/                Konva plan editor, layers, placement & snapping of library items
-src/view3d/                three.js scene, walkthrough
+src/view3d/                three.js scene, walkthrough, presentation (lighting, AO, dimensions, tiles), appliance models
 src/components, src/steps  inspectors, libraries, reports, elevation view, checks, tour, step panels
 src/export/                PDF, Excel and CSV exports
 ```

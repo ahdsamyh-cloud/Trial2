@@ -7,23 +7,28 @@ import { exportCutListCsv, exportExcel, exportPdf } from '../export/exports';
 import { snapshot3D } from '../view3d/Scene3D';
 import { useClashes } from '../store/derived';
 
-/** Make sure a 3D canvas is mounted (briefly switching to split view if needed) and grab a frame. */
-export async function grab3D(): Promise<string | null> {
+/**
+ * Make sure a 3D canvas is mounted (switching to the 3D view if needed) and grab
+ * presentation renders: a photo-style image and a dimensioned sketch.
+ */
+export async function grab3D(): Promise<{ photo: string | null; sketch: string | null }> {
   const ui = useUI.getState();
-  const prev = { view: ui.view, step: ui.step, walk: ui.walk, exploded: ui.exploded };
-  if (!snapshot3D.fn || ui.walk || ui.exploded) {
-    ui.set({ view: 'split', step: 'furniture', walk: false, exploded: false, fitRequest: ui.fitRequest + 1 });
-    for (let i = 0; i < 30 && !snapshot3D.fn; i++) await new Promise((r) => setTimeout(r, 100));
-    await new Promise((r) => setTimeout(r, 900));
-  }
-  let img: string | null = null;
-  try {
-    img = snapshot3D.fn?.() ?? null;
-  } catch {
-    img = null;
-  }
-  useUI.getState().set(prev);
-  return img;
+  const prev = { view: ui.view, step: ui.step, walk: ui.walk, exploded: ui.exploded, present: ui.present, presentDims: ui.presentDims };
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const shot = async (mode: 'photo' | 'sketch', dims: boolean) => {
+    useUI.getState().set({ view: '3d', step: 'furniture', walk: false, exploded: false, present: mode, presentDims: dims, fitRequest: useUI.getState().fitRequest + 1 });
+    for (let i = 0; i < 30 && !snapshot3D.fn; i++) await wait(100);
+    await wait(1400);
+    try {
+      return snapshot3D.fn?.() ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const photo = await shot('photo', false);
+  const sketch = await shot('sketch', true);
+  useUI.getState().set({ ...prev, fitRequest: useUI.getState().fitRequest + 1 });
+  return { photo, sketch };
 }
 
 export function OutputsPanel() {
@@ -74,7 +79,10 @@ export function OutputsPanel() {
       </div>
       <div className="group">
         <h3>Export</h3>
-        <button className="btn primary block" disabled={!!busy || !project.rooms.length} onClick={() => run('PDF', async () => exportPdf(project, { units, snapshot: await grab3D() }))}>
+        <button className="btn primary block" disabled={!!busy || !project.rooms.length} onClick={() => run('PDF', async () => {
+              const shots = await grab3D();
+              exportPdf(project, { units, snapshot: shots.photo, sketch: shots.sketch });
+            })}>
           {busy === 'PDF' ? 'Preparing PDF…' : '⤓ PDF drawings & report'}
         </button>
         <button className="btn block" disabled={!!busy || !rows.length} onClick={() => run('Excel file', () => exportExcel(project))}>

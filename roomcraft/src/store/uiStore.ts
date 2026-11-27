@@ -96,6 +96,9 @@ interface UIState {
   fitRequest: number;
   exploded: boolean;
   walk: boolean;
+  /** Presentation render of the 3D view (null = normal editing view). */
+  present: 'photo' | 'sketch' | null;
+  presentDims: boolean;
   elevationWallId: string | null;
   measurements: Measurement[];
   checksOpen: boolean;
@@ -120,6 +123,8 @@ export const useUI = create<UIState>((set) => ({
   fitRequest: 0,
   exploded: false,
   walk: false,
+  present: null,
+  presentDims: false,
   elevationWallId: null,
   measurements: [],
   checksOpen: false,

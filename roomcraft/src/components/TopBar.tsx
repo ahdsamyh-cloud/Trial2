@@ -3,7 +3,7 @@ import { useProject } from '../store/projectStore';
 import { usePrefs, useUI, type ViewMode } from '../store/uiStore';
 import { downloadProject, readProjectFile } from '../store/persistence';
 import { newProject } from '../model/room';
-import { sampleKitchen } from '../model/sample';
+import { sampleKitchen, sampleShowroom } from '../model/sample';
 import { ChecksButton } from './ChecksDrawer';
 import { UNIT_LABELS } from '../model/units';
 import type { LengthUnit } from '../model/types';
@@ -82,6 +82,16 @@ export function TopBar({ savedAt }: { savedAt: Date | null }) {
               }}
             >
               Load sample kitchen
+            </button>
+            <button
+              onClick={() => {
+                setMenu(false);
+                if (project.rooms.length && !confirm('Replace the current project with the showroom kitchen?')) return;
+                load(sampleShowroom());
+                setUI({ selection: null, step: 'furniture', view: '3d', present: 'photo', presentDims: false, fitRequest: useUI.getState().fitRequest + 1 });
+              }}
+            >
+              Load showroom kitchen
             </button>
             <button
               onClick={() => {
